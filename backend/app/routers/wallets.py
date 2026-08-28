@@ -3,7 +3,7 @@ ATOA Agent Wallets & Reputation Router.
 Provides wallet inspection and devnet faucet funding.
 """
 
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
@@ -15,7 +15,9 @@ router = APIRouter(prefix="/v1/wallets", tags=["wallets"])
 
 
 class FaucetRequest(BaseModel):
-    address: str = Field(..., example="0xWorker_Optimizer_B2")
+    address: str = Field(..., example="0xAgent_Code_Optimizer")
+    name: Optional[str] = None
+    role: Optional[str] = "Bidder"
     amount_usdc: float = Field(default=100.0, gt=0.0, le=10000.0)
 
 
@@ -40,13 +42,19 @@ async def get_wallet(address: str):
 @router.post("/faucet", response_model=WalletState)
 async def fund_wallet_faucet(faucet_in: FaucetRequest):
     """Devnet faucet to fund an agent wallet for live demo testing."""
-    wallet = await state_store.get_or_create_wallet(faucet_in.address)
+    wallet = await state_store.get_or_create_wallet(
+        address=faucet_in.address,
+        name=faucet_in.name,
+        role=faucet_in.role or "Bidder"
+    )
     wallet.balance_usdc += faucet_in.amount_usdc
     
     await ws_manager.broadcast_event(
         event_type=EventType.WALLET_UPDATED,
         data={
             "address": wallet.address,
+            "name": wallet.name,
+            "role": wallet.role,
             "balance_usdc": wallet.balance_usdc,
             "locked_collateral_usdc": wallet.locked_collateral_usdc,
             "reputation_score": wallet.reputation_score,

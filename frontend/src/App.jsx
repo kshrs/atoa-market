@@ -22,8 +22,9 @@ function getAgentColor(nameOrId = '') {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
+// Maps addresses & raw names directly to agent filenames: code_agent.py, research_agent.py, query_agent.py
 function formatAgentName(rawName = '', address = '') {
-  const identifier = (rawName || address).toLowerCase();
+  const identifier = (rawName || address || '').toLowerCase();
   if (identifier.includes('code') || identifier.includes('optimizer')) return 'Code Agent';
   if (identifier.includes('research') || identifier.includes('researcher')) return 'Research Agent';
   if (identifier.includes('query') || identifier.includes('oracle')) return 'Query Agent';
@@ -42,7 +43,7 @@ function getShortLabel(nameOrAddress = '') {
 }
 
 // ----------------------------------------------------------------------
-// 1. ACTIVE AGENTS PANEL (LEFT ZONE - Clean & Live)
+// 1. ACTIVE AGENTS PANEL (LEFT ZONE - Clean Delegators & Bidders)
 // ----------------------------------------------------------------------
 export function ActiveAgentsPanel({ agents }) {
   return (
@@ -75,18 +76,15 @@ export function ActiveAgentsPanel({ agents }) {
       <div className="flex-1 overflow-y-auto pt-4 space-y-3 pr-1">
         {agents.length === 0 ? (
           <div className="h-full flex items-center justify-center font-mono text-xs text-slate-400 text-center p-4">
-            No agents active yet. Launch `agents_demo/run_all_workers.py` or post a task from agy-cli...
+            No agents active yet. Run `python agents_demo/run_all_workers.py` or post a task from agy-cli...
           </div>
         ) : (
           <AnimatePresence>
             {agents.map((agent) => {
               const displayName = formatAgentName(agent.name, agent.address);
-              const isDelegation =
-                agent.role === 'Delegator' ||
-                agent.role === 'Requester' ||
-                displayName.includes('Delegator');
-
-              const roleTitle = isDelegation ? 'Delegator' : 'Bidder';
+              // Only Delegator Daemon / Requester is Delegator; Worker nodes (Code, Research, Query) are strictly Bidders
+              const isDelegator = displayName.includes('Delegator') || agent.role === 'Delegator' || agent.role === 'Requester';
+              const roleTitle = isDelegator ? 'Delegator' : 'Bidder';
               const color = getAgentColor(displayName);
               const shortLabel = getShortLabel(displayName);
 
@@ -110,7 +108,9 @@ export function ActiveAgentsPanel({ agents }) {
                         {displayName}
                       </div>
                       <div className="text-xs text-slate-500 font-mono">
-                        <span className="font-semibold text-slate-700">{roleTitle}</span> • {agent.balance_usdc != null ? `${agent.balance_usdc} USDC` : ''}
+                        <span className={`font-semibold ${isDelegator ? 'text-amber-700' : 'text-rose-700'}`}>
+                          {roleTitle}
+                        </span> • {agent.balance_usdc != null ? `${agent.balance_usdc.toFixed(2)} USDC` : ''}
                       </div>
                     </div>
                   </div>
@@ -118,7 +118,7 @@ export function ActiveAgentsPanel({ agents }) {
                   {/* Role Indicator Pill */}
                   <div
                     className={`w-6 h-6 rounded-full border-2 border-slate-900 flex-shrink-0 ${
-                      isDelegation ? 'bg-amber-200' : 'bg-rose-200'
+                      isDelegator ? 'bg-amber-200' : 'bg-rose-200'
                     }`}
                     title={roleTitle}
                   />
@@ -268,7 +268,7 @@ export function BiddingPlaceBoard({ openTasks }) {
 }
 
 // ----------------------------------------------------------------------
-// 3. COMPLETED WORKS BOARD (BOTTOM RIGHT ZONE - Verified & Settled)
+// 3. COMPLETED WORKS BOARD (BOTTOM RIGHT ZONE - Agent-type Work Display)
 // ----------------------------------------------------------------------
 export function CompletedWorksBoard({ completedTasks }) {
   return (
@@ -302,15 +302,18 @@ export function CompletedWorksBoard({ completedTasks }) {
             const winnerShort = getShortLabel(winnerName);
             const winnerColor = getAgentColor(winnerName);
 
+            // Notify work done by AGENT TYPE (e.g. "Code Agent Task", "Research Agent Synthesis", "Query Agent Fact Check")
+            const agentWorkTypeLabel = `${winnerName} Work`;
+
             const payment =
-              task.budget_usdc != null ? `${task.budget_usdc} USDC` : (task.payment || '$35 USDC');
+              task.budget_usdc != null ? `${task.budget_usdc.toFixed(2)} USDC` : (task.payment || '$35.00 USDC');
 
             return (
               <div
                 key={task.task_id || task.id || idx}
                 className="border-2 border-slate-900 rounded-2xl bg-white p-3.5 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] flex items-center justify-between gap-4"
               >
-                {/* Assignee Avatar + Task Description */}
+                {/* Assignee Avatar + Task Description with Agent Type Header */}
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div
                     className={`w-9 h-9 rounded-full border-2 border-slate-900 flex items-center justify-center font-mono font-bold text-xs flex-shrink-0 ${assigneeColor.bg} ${assigneeColor.text}`}
@@ -318,8 +321,14 @@ export function CompletedWorksBoard({ completedTasks }) {
                     {assigneeShort}
                   </div>
                   <div className="min-w-0">
-                    <div className="text-xs font-bold font-mono text-slate-900 truncate">
-                      {task.title}
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold font-mono text-slate-900 truncate">
+                        {task.title}
+                      </span>
+                      {/* Work Done Tagged by Agent Type */}
+                      <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-300">
+                        {agentWorkTypeLabel}
+                      </span>
                     </div>
                     <div className="text-[11px] font-mono text-slate-500 truncate">
                       {task.description}

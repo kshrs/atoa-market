@@ -1,16 +1,18 @@
 """
-ATOA Tasks & Bidding Router (Part 1: Discovery & Creation).
-Handles publishing tasks with escrow reservation and querying tasks with granular filters.
+ATOA Task Lifecycle Router.
+Handles task broadcasting, multi-agent bidding, automated/manual matchmaking, deliverable submission, and settlement.
 """
 
 from typing import List, Optional
+import time
 from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import BaseModel
 
 from backend.app.models import (
     TaskCreate,
     TaskResponse,
-    TaskCategory,
     TaskStatus,
+    TaskCategory,
     EventType,
 )
 from backend.app.state import state_store
@@ -22,18 +24,16 @@ router = APIRouter(prefix="/v1/tasks", tags=["tasks"])
 @router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 async def create_task(task_in: TaskCreate):
     """
-    Publish a new task to the network.
-    1. Validates requester wallet and balance.
-    2. Locks budget in escrow state.
-    3. Broadcasts TASK_CREATED event to WebSocket observers.
+    Broadcast a new task to the ATOA network and lock escrow from the Delegator's wallet.
     """
-    # 1. Check & ensure requester wallet exists
+    # 1. Check & ensure requester wallet exists and deduct escrow balance immediately
     wallet = await state_store.get_or_create_wallet(
         address=task_in.requester_address,
-        role="Requester"
+        name="Delegator Daemon",
+        role="Delegator"
     )
     
-    # 2. Lock escrow budget
+    # 2. Lock escrow budget (Delegator immediately loses/locks funds)
     escrow_locked = await state_store.lock_wallet_escrow(
         address=task_in.requester_address,
         amount=task_in.budget_usdc
@@ -44,6 +44,18 @@ async def create_task(task_in: TaskCreate):
             detail=f"Insufficient balance in requester wallet ({wallet.balance_usdc} USDC) to fund task budget ({task_in.budget_usdc} USDC)."
         )
     
+    # Broadcast wallet deduction event
+    await ws_manager.broadcast_event(
+        event_type=EventType.WALLET_UPDATED,
+        data={
+            "address": wallet.address,
+            "name": wallet.name,
+            "role": wallet.role,
+            "balance_usdc": wallet.balance_usdc,
+            "locked_collateral_usdc": wallet.locked_collateral_usdc,
+        }
+    )
+
     # 3. Create task record
     task = await state_store.create_task(task_in)
     
@@ -68,13 +80,10 @@ async def create_task(task_in: TaskCreate):
 @router.get("", response_model=List[TaskResponse])
 async def list_tasks(
     category: Optional[TaskCategory] = Query(None, description="Filter by task category"),
-    status: Optional[TaskStatus] = Query(None, description="Filter by task status (e.g. BROADCASTED, MATCHING, IN_PROGRESS)"),
+    status: Optional[TaskStatus] = Query(None, description="Filter by task status"),
     min_budget: Optional[float] = Query(None, description="Filter by minimum USDC budget")
 ):
-    """
-    List tasks available across the network with optional filters.
-    Used by Worker Agents (`agy-cli`) and the frontend dashboard (`nvss`).
-    """
+    """List tasks available across the network with optional filters."""
     return await state_store.list_tasks(
         category=category,
         status=status,
@@ -106,13 +115,7 @@ from backend.app.models import (
 
 @router.post("/{task_id}/bids", response_model=BidResponse, status_code=status.HTTP_201_CREATED)
 async def submit_bid(task_id: str, bid_in: BidCreate):
-    """
-    Submit a bid for an open task.
-    1. Checks that the task exists and is in BROADCASTED or MATCHING state.
-    2. Validates worker wallet balance for the required collateral bond.
-    3. Locks collateral bond from worker balance.
-    4. Records bid and broadcasts BID_PLACED event.
-    """
+    """Submit a bid for an open task."""
     task = await state_store.get_task(task_id)
     if not task:
         raise HTTPException(
@@ -125,7 +128,6 @@ async def submit_bid(task_id: str, bid_in: BidCreate):
             detail=f"Task is in '{task.status.value}' state and is not accepting bids."
         )
     
-    # Ensure worker has enough collateral bond
     if bid_in.collateral_bond_locked < task.required_worker_bond:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -134,7 +136,7 @@ async def submit_bid(task_id: str, bid_in: BidCreate):
     
     worker_wallet = await state_store.get_or_create_wallet(
         address=bid_in.worker_address,
-        role="Worker"
+        role="Bidder"
     )
     
     bond_locked = await state_store.lock_worker_bond(
@@ -147,17 +149,14 @@ async def submit_bid(task_id: str, bid_in: BidCreate):
             detail=f"Insufficient balance in worker wallet ({worker_wallet.balance_usdc} USDC) to lock collateral bond ({bid_in.collateral_bond_locked} USDC)."
         )
     
-    # Record bid in state
     bid = await state_store.add_bid(task_id, bid_in)
     if not bid:
-        # Refund bond if adding bid failed
         await state_store.unlock_worker_bond(bid_in.worker_address, bid_in.collateral_bond_locked)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Failed to record bid on task."
         )
     
-    # Broadcast live telemetry event
     await ws_manager.broadcast_event(
         event_type=EventType.BID_PLACED,
         data={
@@ -178,28 +177,15 @@ async def submit_bid(task_id: str, bid_in: BidCreate):
 @router.get("/{task_id}/bids", response_model=List[BidResponse])
 async def list_task_bids(task_id: str):
     """List all bids submitted for a specific task."""
-    task = await state_store.get_task(task_id)
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Task with ID '{task_id}' not found."
-        )
     return await state_store.get_task_bids(task_id)
 
 
 @router.post("/{task_id}/assign", response_model=TaskResponse)
 async def assign_task(
     task_id: str,
-    selected_bid_id: Optional[str] = Query(None, description="Optional specific bid ID. If omitted, automated matchmaking selects the optimal bid.")
+    selected_bid_id: Optional[str] = Query(None, description="Optional specific bid ID")
 ):
-    """
-    Triggers matchmaking for the task:
-    - If selected_bid_id is provided, assigns to that specific worker.
-    - Otherwise, automatically selects best bid balancing reputation, price, and latency.
-    - Transitions task to IN_PROGRESS.
-    - Refunds collateral bonds for non-winning bidders.
-    - Broadcasts TASK_ASSIGNED event.
-    """
+    """Matchmaking assigns winning bidder to task."""
     winning_bid = await state_store.assign_winning_bid(task_id, selected_bid_id)
     if not winning_bid:
         raise HTTPException(
@@ -209,7 +195,6 @@ async def assign_task(
     
     task = await state_store.get_task(task_id)
     
-    # Broadcast live telemetry event
     await ws_manager.broadcast_event(
         event_type=EventType.TASK_ASSIGNED,
         data={
@@ -238,19 +223,10 @@ from backend.app.services.web3_escrow import web3_service
 @router.post("/{task_id}/deliverables", response_model=TaskResponse)
 async def submit_deliverable(task_id: str, submission: DeliverableSubmission):
     """
-    Submit completed task deliverable (code, research JSON, or query answer).
-    1. Validates that task exists and is in IN_PROGRESS state.
-    2. Verifies that the submitting worker is the assigned worker.
-    3. Runs programmatic verification oracle across the task's category.
-    4. IF PASS:
-       - Triggers Web3 payout & returns worker collateral bond.
-       - Credits worker wallet balance (+payout) and reputation (+5).
-       - Broadcasts PAYOUT_SETTLED event.
-    5. IF FAIL:
-       - Triggers Web3 slashing of worker bond.
-       - Slashes worker wallet collateral & slashes reputation (-20).
-       - Refunds escrow budget back to requester.
-       - Broadcasts WORKER_SLASHED event.
+    Submit completed task deliverable.
+    - Runs programmatic verification.
+    - If PASS: Winner gains payout USDC + returns bond.
+    - If FAIL: Worker is slashed and escrow refunded to Delegator.
     """
     task = await state_store.get_task(task_id)
     if not task:
@@ -282,7 +258,7 @@ async def submit_deliverable(task_id: str, submission: DeliverableSubmission):
         }
     )
     
-    # 2. Run programmatic verification oracle
+    # 2. Run verification oracle
     report: VerificationReport = await verification_oracle.verify_deliverable(
         task_id=task_id,
         category=task.category,
@@ -290,7 +266,6 @@ async def submit_deliverable(task_id: str, submission: DeliverableSubmission):
         validation_spec=task.validation_spec
     )
     
-    # Broadcast verification report
     await ws_manager.broadcast_event(
         event_type=EventType.VERIFICATION_COMPLETED,
         data={
@@ -303,39 +278,55 @@ async def submit_deliverable(task_id: str, submission: DeliverableSubmission):
         }
     )
     
-    # 3. Handle Settlement or Slashing based on verification verdict
+    # 3. Handle Settlement or Slashing
     if report.passed:
-        # Payout & Settlement Path
+        # Determine winning payout (from accepted bid price or task budget)
+        winning_bid = next((b for b in task.bids if b.status == "ACCEPTED" or b.worker_address == submission.worker_address), None)
+        payout_amount = winning_bid.bid_price_usdc if winning_bid else task.budget_usdc
+
         tx = await web3_service.settle_successful_payout(
             task_id=task_id,
             worker_address=submission.worker_address,
-            payout_usdc=task.budget_usdc
+            payout_usdc=payout_amount
         )
         
-        # Credit worker and return collateral bond
-        await state_store.credit_payout(submission.worker_address, task.budget_usdc)
+        # Credit winning worker with payout and return collateral bond
+        await state_store.credit_payout(submission.worker_address, payout_amount)
         await state_store.unlock_worker_bond(submission.worker_address, task.required_worker_bond)
         
+        # If worker bid lower than budget, refund remainder to Delegator
+        budget_remainder = task.budget_usdc - payout_amount
+        if budget_remainder > 0:
+            await state_store.refund_requester_escrow(task.requester_address, budget_remainder)
+
         task = await state_store.record_verification_and_settle(
             task_id=task_id,
             report=report,
             settlement_tx_hash=tx.get("tx_hash")
         )
         
-        # Broadcast settlement event
         await ws_manager.broadcast_event(
             event_type=EventType.PAYOUT_SETTLED,
             data={
                 "task_id": task_id,
                 "worker_address": submission.worker_address,
-                "payout_amount_usdc": task.budget_usdc,
+                "payout_amount_usdc": payout_amount,
                 "worker_bond_returned": task.required_worker_bond,
                 "tx_hash": tx.get("tx_hash"),
                 "status": TaskStatus.SETTLED.value,
             }
         )
+        
+        # Broadcast updated wallet balances
+        w_worker = await state_store.get_wallet(submission.worker_address)
+        w_delegator = await state_store.get_wallet(task.requester_address)
+        if w_worker:
+            await ws_manager.broadcast_event(EventType.WALLET_UPDATED, data=w_worker.model_dump())
+        if w_delegator:
+            await ws_manager.broadcast_event(EventType.WALLET_UPDATED, data=w_delegator.model_dump())
+
     else:
-        # Slashing Path (Malicious / Failed submission)
+        # Slashing Path
         tx = await web3_service.execute_slash(
             task_id=task_id,
             worker_address=submission.worker_address,
@@ -343,7 +334,6 @@ async def submit_deliverable(task_id: str, submission: DeliverableSubmission):
             bond_amount_usdc=task.required_worker_bond
         )
         
-        # Slash worker collateral bond and refund requester escrow
         await state_store.slash_worker(
             worker_address=submission.worker_address,
             requester_address=task.requester_address,
@@ -357,7 +347,6 @@ async def submit_deliverable(task_id: str, submission: DeliverableSubmission):
             settlement_tx_hash=tx.get("tx_hash")
         )
         
-        # Broadcast slashing event
         await ws_manager.broadcast_event(
             event_type=EventType.WORKER_SLASHED,
             data={
@@ -371,5 +360,12 @@ async def submit_deliverable(task_id: str, submission: DeliverableSubmission):
                 "status": TaskStatus.SLASHED.value,
             }
         )
+
+        w_worker = await state_store.get_wallet(submission.worker_address)
+        w_delegator = await state_store.get_wallet(task.requester_address)
+        if w_worker:
+            await ws_manager.broadcast_event(EventType.WALLET_UPDATED, data=w_worker.model_dump())
+        if w_delegator:
+            await ws_manager.broadcast_event(EventType.WALLET_UPDATED, data=w_delegator.model_dump())
         
     return task
