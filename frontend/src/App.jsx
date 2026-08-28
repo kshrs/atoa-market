@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { fetchTasks, fetchWallets, subscribeToLiveEvents } from './api';
-import { INITIAL_AGENTS, INITIAL_OPEN_TASKS, INITIAL_COMPLETED_TASKS, simulateAgentStep } from './mockData';
+import { INITIAL_AGENTS, INITIAL_OPEN_TASKS, INITIAL_COMPLETED_TASKS, runSimulationCycle } from './mockData';
 
 // ----------------------------------------------------------------------
 // HELPER: CLEAN AGENT NAME & AVATAR FORMATTER
@@ -123,7 +123,7 @@ export function ActiveAgentsPanel({ agents }) {
                       <div className="text-xs text-slate-500 font-mono mt-0.5">
                         <span className={`font-semibold ${isDelegator ? 'text-amber-700' : 'text-rose-700'}`}>
                           {roleTitle}
-                        </span> • {agent.balance_usdc != null ? `${agent.balance_usdc.toFixed(2)} USDC` : ''}
+                        </span> • {agent.balance_usdc != null ? `${Number(agent.balance_usdc).toFixed(2)} USDC` : ''}
                       </div>
                     </div>
                   </div>
@@ -319,7 +319,7 @@ export function CompletedWorksBoard({ completedTasks }) {
 
             const agentWorkTypeLabel = `${winnerName} Work`;
             const payment =
-              task.budget_usdc != null ? `${task.budget_usdc.toFixed(2)} USDC` : (task.payment || '$35.00 USDC');
+              task.budget_usdc != null ? `${Number(task.budget_usdc).toFixed(2)} USDC` : (task.payment || '$35.00 USDC');
 
             return (
               <div
@@ -403,6 +403,12 @@ export default function App() {
   const [completedTasks, setCompletedTasks] = useState(INITIAL_COMPLETED_TASKS);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
 
+  // References to maintain latest state for simulation loop
+  const stateRef = useRef({ openTasks, completedTasks, agents });
+  useEffect(() => {
+    stateRef.current = { openTasks, completedTasks, agents };
+  }, [openTasks, completedTasks, agents]);
+
   // 1. Initial REST Sync with FastAPI backend
   const syncWithBackend = useCallback(async () => {
     const liveWallets = await fetchWallets();
@@ -442,24 +448,16 @@ export default function App() {
     if (isLiveConnected) return;
 
     const interval = setInterval(() => {
-      setOpenTasks((prevOpen) => {
-        setCompletedTasks((prevCompleted) => {
-          setAgents((prevAgents) => {
-            const res = simulateAgentStep(prevOpen, prevCompleted, prevAgents);
-            // Update other states inside synchronized step
-            setCompletedTasks(res.completed);
-            setAgents(res.agents);
-            return res.agents;
-          });
-          return prevCompleted;
-        });
-        const res = simulateAgentStep(prevOpen, completedTasks, agents);
-        return res.tasks;
-      });
-    }, 4500);
+      const current = stateRef.current;
+      const next = runSimulationCycle(current.openTasks, current.completedTasks, current.agents);
+      
+      setOpenTasks(next.tasks);
+      setCompletedTasks(next.completed);
+      setAgents(next.agents);
+    }, 4000);
 
     return () => clearInterval(interval);
-  }, [isLiveConnected, completedTasks, agents]);
+  }, [isLiveConnected]);
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#fdfbf7] text-slate-900 p-4 font-sans overflow-hidden select-none">

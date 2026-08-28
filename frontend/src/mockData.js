@@ -82,14 +82,28 @@ const TASK_TEMPLATES = [
     budget: 30.0,
     domain: 'query',
     worker: '0xAgent_Query_Oracle'
+  },
+  {
+    title: 'Sum of Squares Vector Reducer Kernel',
+    description: 'Calculate sum of squares for integer array with SIMD acceleration.',
+    budget: 50.0,
+    domain: 'code',
+    worker: '0xAgent_Code_Optimizer_2'
+  },
+  {
+    title: 'Decentralized LLM Routing & Quantization Benchmarks',
+    description: 'Literature review on 4-bit AWQ shard execution latencies across GPU clusters.',
+    budget: 70.0,
+    domain: 'research',
+    worker: '0xAgent_Researcher_Node_2'
   }
 ];
 
-export function simulateAgentStep(currentTasks, currentCompleted, currentAgents) {
-  // If open tasks exist, settle the oldest one
+export function runSimulationCycle(currentTasks, currentCompleted, currentAgents) {
+  // If open tasks exist, settle the oldest one and add to completed tasks
   if (currentTasks.length > 0) {
     const taskToSettle = currentTasks[0];
-    const winningBid = taskToSettle.bids && taskToSettle.bids.length > 0 
+    const winningBid = (taskToSettle.bids && taskToSettle.bids.length > 0)
       ? taskToSettle.bids.reduce((prev, curr) => (curr.bid_price_usdc < prev.bid_price_usdc ? curr : prev))
       : { worker_address: '0xAgent_Code_Optimizer_1', bid_price_usdc: taskToSettle.budget_usdc * 0.88 };
 
@@ -97,19 +111,24 @@ export function simulateAgentStep(currentTasks, currentCompleted, currentAgents)
       ...taskToSettle,
       status: 'SETTLED',
       assigned_worker: winningBid.worker_address,
-      budget_usdc: winningBid.bid_price_usdc
+      budget_usdc: winningBid.bid_price_usdc,
+      settledAt: new Date().toLocaleTimeString()
     };
 
     const remainingTasks = currentTasks.slice(1);
     const updatedCompleted = [settledTask, ...currentCompleted];
 
-    // Update balances: Delegator loses, Worker gains
+    // Update balances: Delegator spends, Winning Worker earns + reputation gain
     const updatedAgents = currentAgents.map(a => {
       if (a.address === '0xDelegator_Autonomous_Daemon') {
         return { ...a, balance_usdc: Math.max(0, a.balance_usdc - winningBid.bid_price_usdc) };
       }
       if (a.address === winningBid.worker_address) {
-        return { ...a, balance_usdc: a.balance_usdc + winningBid.bid_price_usdc, reputation_score: a.reputation_score + 15 };
+        return { 
+          ...a, 
+          balance_usdc: a.balance_usdc + winningBid.bid_price_usdc, 
+          reputation_score: (a.reputation_score || 100) + 15 
+        };
       }
       return a;
     });
@@ -121,19 +140,27 @@ export function simulateAgentStep(currentTasks, currentCompleted, currentAgents)
     };
   }
 
-  // If no open tasks, publish a new simulated task with competing bids
+  // If no open tasks, generate a new task with active competing bids
   const tmpl = TASK_TEMPLATES[Math.floor(Math.random() * TASK_TEMPLATES.length)];
   const newTask = {
-    task_id: `task_${Date.now().toString(36)}`,
+    task_id: `task_${Date.now().toString(36)}_${Math.floor(Math.random() * 1000)}`,
     title: tmpl.title,
     description: tmpl.description,
     requester_address: '0xDelegator_Autonomous_Daemon',
     budget_usdc: tmpl.budget,
-    required_worker_bond: tmpl.budget * 0.1,
+    required_worker_bond: Math.round(tmpl.budget * 0.1),
     status: 'MATCHING',
     bids: [
-      { worker_address: tmpl.worker, bid_price_usdc: round2(tmpl.budget * 0.94), worker_reputation_score: 120 },
-      { worker_address: tmpl.domain === 'code' ? '0xAgent_Code_Optimizer_2' : (tmpl.domain === 'research' ? '0xAgent_Researcher_Node_2' : '0xAgent_Query_Oracle'), bid_price_usdc: round2(tmpl.budget * 0.88), worker_reputation_score: 115 }
+      { 
+        worker_address: tmpl.worker, 
+        bid_price_usdc: Math.round(tmpl.budget * 0.94 * 100) / 100, 
+        worker_reputation_score: 120 
+      },
+      { 
+        worker_address: tmpl.domain === 'code' ? '0xAgent_Code_Optimizer_2' : (tmpl.domain === 'research' ? '0xAgent_Researcher_Node_2' : '0xAgent_Query_Oracle'), 
+        bid_price_usdc: Math.round(tmpl.budget * 0.88 * 100) / 100, 
+        worker_reputation_score: 115 
+      }
     ]
   };
 
@@ -142,8 +169,4 @@ export function simulateAgentStep(currentTasks, currentCompleted, currentAgents)
     completed: currentCompleted,
     agents: currentAgents
   };
-}
-
-function round2(val) {
-  return Math.round(val * 100) / 100;
 }
