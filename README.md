@@ -149,7 +149,7 @@ Full module-level I/O contracts and repo layout are in [`technical-architecture.
 ## Quick Start
 
 ```bash
-git clone https://github.com/ThunderBoltz-ATOA/atoa-market.git
+git clone https://github.com/kshrs/atoa-market.git
 cd atoa-market
 cp .env.example .env
 
