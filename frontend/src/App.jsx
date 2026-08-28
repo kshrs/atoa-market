@@ -23,9 +23,10 @@ function getAgentColor(nameOrId = '') {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
-function formatAgentName(rawName = '', address = '') {
+function formatAgentName(rawName = '', address = '', role = '') {
   if (rawName && !rawName.startsWith('Agent_0x')) return rawName;
   const identifier = (rawName || address || '').toLowerCase();
+  
   if (identifier.includes('code_optimizer_1') || identifier.includes('alpha-code')) return 'Code Agent (Alpha)';
   if (identifier.includes('code_optimizer_2') || identifier.includes('beta-code')) return 'Code Agent (Beta)';
   if (identifier.includes('code')) return 'Code Agent';
@@ -36,11 +37,16 @@ function formatAgentName(rawName = '', address = '') {
   if (identifier.includes('bidder')) return 'Bidder Agent';
   if (identifier.includes('worker')) return 'Worker Agent';
   if (identifier.includes('requester') || identifier.includes('delegator') || identifier.includes('daemon')) return 'Delegator Agent';
-  return 'Bidder Agent';
+  
+  // Honor explicit role if no keyword matched
+  if (role === 'Delegator' || role === 'Requester') return 'Delegator Agent';
+  if (role === 'Bidder') return 'Bidder Agent';
+
+  return 'Agent';
 }
 
-function getShortLabel(nameOrAddress = '') {
-  const formatted = formatAgentName(nameOrAddress, nameOrAddress);
+function getShortLabel(nameOrAddress = '', role = '') {
+  const formatted = formatAgentName(nameOrAddress, nameOrAddress, role);
   if (formatted.includes('Code') && formatted.includes('Alpha')) return 'CD-α';
   if (formatted.includes('Code') && formatted.includes('Beta')) return 'CD-β';
   if (formatted.includes('Code')) return 'CODE';
@@ -48,8 +54,8 @@ function getShortLabel(nameOrAddress = '') {
   if (formatted.includes('Research') && formatted.includes('Beta')) return 'RS-β';
   if (formatted.includes('Research')) return 'RSCH';
   if (formatted.includes('Query')) return 'QRY';
-  if (formatted.includes('Bidder') || formatted.includes('Worker')) return 'BID';
-  if (formatted.includes('Delegator') || formatted.includes('Requester')) return 'REQ';
+  if (formatted.includes('Delegator') || formatted.includes('Requester') || role === 'Delegator') return 'REQ';
+  if (formatted.includes('Bidder') || formatted.includes('Worker') || role === 'Bidder') return 'BID';
   return (nameOrAddress.slice(0, 4) || 'AG').toUpperCase();
 }
 
@@ -98,11 +104,11 @@ export function ActiveAgentsPanel({ agents }) {
         ) : (
           <AnimatePresence>
             {agents.map((agent) => {
-              const displayName = formatAgentName(agent.name, agent.address);
-              const isDelegator = agent.role === 'Delegator' || agent.role === 'Requester' || (agent.role !== 'Bidder' && displayName.includes('Delegator'));
+              const displayName = formatAgentName(agent.name, agent.address, agent.role);
+              const isDelegator = agent.role === 'Delegator' || agent.role === 'Requester' || displayName.includes('Delegator');
               const roleTitle = isDelegator ? 'Delegator' : 'Bidder';
               const color = getAgentColor(displayName);
-              const shortLabel = getShortLabel(displayName);
+              const shortLabel = getShortLabel(displayName, agent.role);
               const repScore = agent.reputation_score != null ? Math.round(agent.reputation_score) : 100;
 
               return (
@@ -185,13 +191,13 @@ export function BiddingPlaceBoard({ openTasks }) {
         ) : (
           openTasks.map((task, idx) => {
             const rawAssignee = task.requester_address || task.assignee?.name || 'Delegator';
-            const assigneeName = formatAgentName(rawAssignee, rawAssignee);
-            const assigneeShort = getShortLabel(assigneeName);
+            const assigneeName = formatAgentName(rawAssignee, rawAssignee, 'Delegator');
+            const assigneeShort = getShortLabel(assigneeName, 'Delegator');
             const assigneeColor = getAgentColor(assigneeName);
 
             const rawWinner = task.assigned_worker || (task.bids && task.bids.find(b => b.status === 'ACCEPTED')?.worker_address);
-            const winnerName = rawWinner ? formatAgentName(rawWinner, rawWinner) : 'Pending';
-            const winnerShort = rawWinner ? getShortLabel(winnerName) : '...';
+            const winnerName = rawWinner ? formatAgentName(rawWinner, rawWinner, 'Bidder') : 'Pending';
+            const winnerShort = rawWinner ? getShortLabel(winnerName, 'Bidder') : '...';
             const winnerColor = getAgentColor(winnerName);
 
             const bidsList = task.bids || [];
@@ -252,8 +258,8 @@ export function BiddingPlaceBoard({ openTasks }) {
                     {bidsList.length > 0 ? (
                       bidsList.map((bid, bIdx) => {
                         const bAddress = bid.worker_address || bid.agentName || bid.bidderId;
-                        const bName = formatAgentName(bAddress, bAddress);
-                        const bShort = getShortLabel(bName);
+                        const bName = formatAgentName(bAddress, bAddress, 'Bidder');
+                        const bShort = getShortLabel(bName, 'Bidder');
                         const bColor = getAgentColor(bName);
                         const bPrice = bid.bid_price_usdc != null ? bid.bid_price_usdc : bid.price;
                         const bRep = bid.worker_reputation_score ? Math.round(bid.worker_reputation_score) : 100;
@@ -317,13 +323,13 @@ export function CompletedWorksBoard({ completedTasks }) {
           completedTasks.map((task, idx) => {
             const isSlashed = task.status === 'SLASHED' || task.status === 'Failed';
             const rawAssignee = task.requester_address || task.assignee?.name || 'Delegator';
-            const assigneeName = formatAgentName(rawAssignee, rawAssignee);
-            const assigneeShort = getShortLabel(assigneeName);
+            const assigneeName = formatAgentName(rawAssignee, rawAssignee, 'Delegator');
+            const assigneeShort = getShortLabel(assigneeName, 'Delegator');
             const assigneeColor = getAgentColor(assigneeName);
 
             const rawWinner = task.assigned_worker || task.winner?.name || 'Worker Node';
-            const winnerName = formatAgentName(rawWinner, rawWinner);
-            const winnerShort = getShortLabel(winnerName);
+            const winnerName = formatAgentName(rawWinner, rawWinner, 'Bidder');
+            const winnerShort = getShortLabel(winnerName, 'Bidder');
             const winnerColor = getAgentColor(winnerName);
 
             const agentWorkTypeLabel = `${winnerName} Work`;
