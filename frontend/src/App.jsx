@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { fetchTasks, fetchWallets, subscribeToLiveEvents } from './api';
-import { INITIAL_AGENTS, INITIAL_OPEN_TASKS, INITIAL_COMPLETED_TASKS, simulateAgentStep } from './mockData';
+import { INITIAL_AGENTS, INITIAL_OPEN_TASKS, INITIAL_COMPLETED_TASKS, runSimulationCycle } from './mockData';
 
 // ----------------------------------------------------------------------
 // HELPER: CLEAN AGENT NAME & AVATAR FORMATTER
@@ -67,8 +67,8 @@ export function ActiveAgentsPanel({ agents }) {
           </span>
         </div>
 
-        {/* Role Legend from Wireframe */}
-        <div className="flex items-center gap-4 mt-3 text-xs font-mono text-slate-600">
+        {/* Role & Reputation Legend */}
+        <div className="flex flex-wrap items-center gap-3 mt-3 text-xs font-mono text-slate-600">
           <div className="flex items-center gap-1.5">
             <span className="w-3.5 h-3.5 rounded-full bg-amber-200 border-2 border-slate-800 inline-block" />
             <span className="font-semibold">Delegator</span>
@@ -76,6 +76,12 @@ export function ActiveAgentsPanel({ agents }) {
           <div className="flex items-center gap-1.5">
             <span className="w-3.5 h-3.5 rounded-full bg-rose-200 border-2 border-slate-800 inline-block" />
             <span className="font-semibold">Bidder</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-800 border border-indigo-200">
+              ★ Rep
+            </span>
+            <span className="font-semibold">Score</span>
           </div>
         </div>
       </div>
@@ -123,7 +129,7 @@ export function ActiveAgentsPanel({ agents }) {
                       <div className="text-xs text-slate-500 font-mono mt-0.5">
                         <span className={`font-semibold ${isDelegator ? 'text-amber-700' : 'text-rose-700'}`}>
                           {roleTitle}
-                        </span> • {agent.balance_usdc != null ? `${agent.balance_usdc.toFixed(2)} USDC` : ''}
+                        </span> • {agent.balance_usdc != null ? `${Number(agent.balance_usdc).toFixed(2)} USDC` : ''}
                       </div>
                     </div>
                   </div>
@@ -319,7 +325,7 @@ export function CompletedWorksBoard({ completedTasks }) {
 
             const agentWorkTypeLabel = `${winnerName} Work`;
             const payment =
-              task.budget_usdc != null ? `${task.budget_usdc.toFixed(2)} USDC` : (task.payment || '$35.00 USDC');
+              task.budget_usdc != null ? `${Number(task.budget_usdc).toFixed(2)} USDC` : (task.payment || '$35.00 USDC');
 
             return (
               <div
@@ -403,6 +409,11 @@ export default function App() {
   const [completedTasks, setCompletedTasks] = useState(INITIAL_COMPLETED_TASKS);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
 
+  const stateRef = useRef({ openTasks, completedTasks, agents });
+  useEffect(() => {
+    stateRef.current = { openTasks, completedTasks, agents };
+  }, [openTasks, completedTasks, agents]);
+
   // 1. Initial REST Sync with FastAPI backend
   const syncWithBackend = useCallback(async () => {
     const liveWallets = await fetchWallets();
@@ -442,24 +453,16 @@ export default function App() {
     if (isLiveConnected) return;
 
     const interval = setInterval(() => {
-      setOpenTasks((prevOpen) => {
-        setCompletedTasks((prevCompleted) => {
-          setAgents((prevAgents) => {
-            const res = simulateAgentStep(prevOpen, prevCompleted, prevAgents);
-            // Update other states inside synchronized step
-            setCompletedTasks(res.completed);
-            setAgents(res.agents);
-            return res.agents;
-          });
-          return prevCompleted;
-        });
-        const res = simulateAgentStep(prevOpen, completedTasks, agents);
-        return res.tasks;
-      });
-    }, 4500);
+      const current = stateRef.current;
+      const next = runSimulationCycle(current.openTasks, current.completedTasks, current.agents);
+      
+      setOpenTasks(next.tasks);
+      setCompletedTasks(next.completed);
+      setAgents(next.agents);
+    }, 4000);
 
     return () => clearInterval(interval);
-  }, [isLiveConnected, completedTasks, agents]);
+  }, [isLiveConnected]);
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#fdfbf7] text-slate-900 p-4 font-sans overflow-hidden select-none">
@@ -479,7 +482,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Live indicator */}
+        {/* Live indicator & Multi-Agent Framework Tag */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 px-3 py-1 rounded-xl text-xs font-mono font-bold bg-white border-2 border-slate-900 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]">
             <span
@@ -487,7 +490,11 @@ export default function App() {
                 isLiveConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
               }`}
             />
-            <span>{isLiveConnected ? 'Live agy-cli Stream Connected' : 'Autonomous Web Simulation (GitHub Pages)'}</span>
+            <span>
+              {isLiveConnected 
+                ? 'Live agy-cli Stream Connected' 
+                : 'Automated web simulation (GitHub Pages) of running agents: agy-cli, Claude Code, Codex, Windsurf'}
+            </span>
           </div>
         </div>
       </header>
