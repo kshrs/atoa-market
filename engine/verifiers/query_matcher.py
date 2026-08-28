@@ -1,67 +1,31 @@
 """
-Query & Spec Matching Verifier Module.
+Query & Spec Matching Verifier Module (QueryValidatorBot).
 Assesses whether the submitted deliverable strictly matches the original task prompt,
-constraints, required keywords, and JSON input/output schemas.
+ground truth search assertions, required keywords/flags, regex patterns, and JSON schemas.
 """
 import json
 import re
 from typing import Dict, Any, List, Set, Optional, Tuple
+import jsonschema
 from engine.models import TaskManifest, DeliverablePayload, EvaluationResult
 
 
-def _validate_schema(data: Any, schema: Dict[str, Any]) -> Tuple[bool, List[str]]:
+def validate_with_jsonschema(data: Any, schema: Dict[str, Any]) -> Tuple[bool, List[str]]:
     """
-    Validates data against a json-schema-like dictionary.
-    Supports 'type', 'required', and 'properties'.
+    Validates data against standard JSON Schema using the Python jsonschema library.
+    Returns (is_valid, list of error messages).
     """
+    validator = jsonschema.Draft202012Validator(schema)
     errors = []
-    if not isinstance(schema, dict):
-        return True, []
-
-    expected_type = schema.get("type")
-    if expected_type:
-        type_map = {
-            "object": dict,
-            "array": list,
-            "string": str,
-            "number": (int, float),
-            "integer": int,
-            "boolean": bool,
-            "null": type(None),
-        }
-        py_type = type_map.get(expected_type)
-        if py_type and not isinstance(data, py_type):
-            errors.append(f"Expected root type '{expected_type}', got '{type(data).__name__}'")
-            return False, errors
-
-    if isinstance(data, dict):
-        required_fields = schema.get("required", [])
-        for field in required_fields:
-            if field not in data:
-                errors.append(f"Missing required field '{field}'")
-
-        properties = schema.get("properties", {})
-        for prop_name, prop_schema in properties.items():
-            if prop_name in data and isinstance(prop_schema, dict):
-                prop_type_str = prop_schema.get("type")
-                if prop_type_str:
-                    prop_py_type = {
-                        "object": dict,
-                        "array": list,
-                        "string": str,
-                        "number": (int, float),
-                        "integer": int,
-                        "boolean": bool,
-                    }.get(prop_type_str)
-                    if prop_py_type and not isinstance(data[prop_name], prop_py_type):
-                        errors.append(f"Field '{prop_name}' expected type '{prop_type_str}', got '{type(data[prop_name]).__name__}'")
-
+    for error in validator.iter_errors(data):
+        path = ".".join(str(p) for p in error.absolute_path) or "root"
+        errors.append(f"[{path}] {error.message}")
     return len(errors) == 0, errors
 
 
 async def verify_matcher(task_spec: TaskManifest, deliverable: DeliverablePayload) -> EvaluationResult:
     """
-    Evaluates deliverable alignment with prompt specifications, schemas, and constraints.
+    Evaluates deliverable alignment with prompt specifications, schemas, regexes, and constraints.
     """
     task_id = task_spec.task_id
     proof_logs = []
@@ -83,20 +47,21 @@ async def verify_matcher(task_spec: TaskManifest, deliverable: DeliverablePayloa
 
     # 1. Spec Schema Validation (if schema specified)
     schema_score = 1.0
-    if task_spec.spec_schema:
+    target_schema = task_spec.spec_schema or task_spec.constraints.get("schema")
+    if target_schema:
         if data is None:
             benchmark_metrics["schema_valid"] = False
             proof_logs.append("[Schema Error] Task specified JSON schema but deliverable contains no valid JSON object.")
             schema_score = 0.0
         else:
-            is_valid, errs = _validate_schema(data, task_spec.spec_schema)
+            is_valid, errs = validate_with_jsonschema(data, target_schema)
             benchmark_metrics["schema_valid"] = is_valid
             benchmark_metrics["missing_fields"] = errs
             if not is_valid:
-                proof_logs.append(f"[Schema Error] Schema validation failed with errors: {errs}")
-                schema_score = max(0.0, 1.0 - (len(errs) * 0.3))
+                proof_logs.append(f"[Schema Error] jsonschema validation failed: {errs}")
+                schema_score = max(0.0, 1.0 - (len(errs) * 0.25))
             else:
-                proof_logs.append("[Schema Check] Deliverable strictly satisfies target schema.")
+                proof_logs.append("[Schema Check] Deliverable strictly satisfies target jsonschema.")
 
     # 2. Constraint Compliance
     constraint_score = 1.0
@@ -112,15 +77,15 @@ async def verify_matcher(task_spec: TaskManifest, deliverable: DeliverablePayloa
             constraint_score -= 0.2
             proof_logs.append("[Constraint Warning] Deliverable does not appear to use Markdown formatting.")
 
-    # Required Keywords / Flags
-    required_keywords = constraints.get("required_keywords", [])
+    # Required Keywords / Flags / Ground Truth Entities
+    required_keywords = constraints.get("required_keywords", []) or constraints.get("ground_truth_entities", [])
     if required_keywords:
         full_content = (text + " " + json.dumps(data) if data else text).lower()
         missing_kw = [kw for kw in required_keywords if kw.lower() not in full_content]
         if missing_kw:
             kw_ratio = (len(required_keywords) - len(missing_kw)) / len(required_keywords)
             constraint_score *= kw_ratio
-            proof_logs.append(f"[Constraint Error] Missing required keywords: {missing_kw}")
+            proof_logs.append(f"[Constraint Error] Missing required keywords/entities: {missing_kw}")
 
     # Regex constraints
     regex_patterns = constraints.get("regex_patterns", [])
@@ -147,22 +112,21 @@ async def verify_matcher(task_spec: TaskManifest, deliverable: DeliverablePayloa
     benchmark_metrics["prompt_alignment"] = round(prompt_alignment, 3)
 
     # Composite Score Calculation
-    has_constraints = bool(task_spec.constraints or task_spec.spec_schema)
-    if task_spec.spec_schema and task_spec.constraints:
+    if target_schema and constraints:
         base_score = (0.50 * schema_score) + (0.50 * constraint_score)
         final_score = base_score * (0.85 + 0.15 * prompt_alignment)
-    elif task_spec.spec_schema:
+    elif target_schema:
         base_score = schema_score
         final_score = base_score * (0.85 + 0.15 * prompt_alignment)
-    elif task_spec.constraints:
+    elif constraints:
         base_score = constraint_score
         final_score = base_score * (0.85 + 0.15 * prompt_alignment)
     else:
         final_score = prompt_alignment
 
     final_score = max(0.0, min(1.0, final_score))
-    verdict: "Literal['PASS', 'FAIL']" = "PASS" if final_score >= task_spec.passing_threshold else "FAIL"
-    slashing = final_score < task_spec.slashing_threshold
+    verdict: "Literal['PASS', 'FAIL']" = "PASS" if final_score >= task_spec.passing_threshold and benchmark_metrics["schema_valid"] else "FAIL"
+    slashing = final_score < task_spec.slashing_threshold or not benchmark_metrics["schema_valid"]
 
     proof_logs.append(f"[Score Summary] Schema={schema_score:.2f}, Constraints={constraint_score:.2f}, PromptAlign={prompt_alignment:.2f} -> Final Score={final_score:.2f}")
 

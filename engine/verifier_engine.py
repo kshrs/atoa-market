@@ -4,10 +4,11 @@ Exposes the public evaluate_task interface, CLI runner, and backend API payload 
 """
 import argparse
 import asyncio
+import concurrent.futures
 import json
 import sys
 from typing import Dict, Any, Union, Optional
-from engine.models import TaskManifest, DeliverablePayload, EvaluationResult
+from engine.models import TaskManifest, DeliverablePayload, EvaluationResult, VerificationReport
 from engine.verifiers.dispatcher import dispatch_evaluation
 
 
@@ -33,20 +34,21 @@ def evaluate_task_sync(
     task_spec: Union[TaskManifest, Dict[str, Any]], 
     deliverable: Union[DeliverablePayload, Dict[str, Any]]
 ) -> EvaluationResult:
-    """Synchronous wrapper for evaluate_task."""
+    """
+    Synchronous wrapper for evaluate_task.
+    Uses stdlib ThreadPoolExecutor if an event loop is already running.
+    """
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
     except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    if loop.is_running():
-        # Running inside existing event loop
-        import nest_asyncio  # if available or run in thread
-        nest_asyncio.apply()
-        return loop.run_until_complete(evaluate_task(task_spec, deliverable))
+        loop = None
+
+    if loop and loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, evaluate_task(task_spec, deliverable))
+            return future.result()
     else:
-        return loop.run_until_complete(evaluate_task(task_spec, deliverable))
+        return asyncio.run(evaluate_task(task_spec, deliverable))
 
 
 def atoa_submit_verdict(result: EvaluationResult) -> Dict[str, Any]:

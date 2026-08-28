@@ -1,6 +1,6 @@
 """
-Coding Verifier Module.
-Executes, benchmarks, and validates submitted code in an isolated sandbox with timeout and security checks.
+Coding Verifier Module (CodeValidatorBot).
+Executes, benchmarks, and validates submitted code in an isolated sandbox with timeout and AST security checks.
 """
 import ast
 import asyncio
@@ -13,18 +13,21 @@ from engine.models import TaskManifest, DeliverablePayload, EvaluationResult
 
 
 FORBIDDEN_AST_MODULES = {"ctypes", "winreg", "_winapi", "pty"}
-DANGEROUS_CALLS = {"os.system", "shutil.rmtree", "subprocess.Popen", "subprocess.call", "subprocess.run"}
+FORBIDDEN_FUNCS = {"eval", "exec", "__import__"}
 
 
 def _check_ast_safety(code: str, allow_subprocess: bool = False) -> Tuple[bool, str]:
-    """Perform static AST inspection to prevent malicious or destructive code."""
+    """
+    Perform static AST inspection to block dangerous syscalls, dynamic code evaluation,
+    introspection chains, and forbidden modules.
+    """
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
         return False, f"SyntaxError: {e}"
 
     for node in ast.walk(tree):
-        # Check imports
+        # 1. Check static imports
         if isinstance(node, ast.Import):
             for name in node.names:
                 root_pkg = name.name.split('.')[0]
@@ -39,6 +42,18 @@ def _check_ast_safety(code: str, allow_subprocess: bool = False) -> Tuple[bool, 
                     return False, f"SecurityViolation: Import from forbidden module '{root_pkg}'"
                 if not allow_subprocess and root_pkg == "subprocess":
                     return False, "SecurityViolation: Subprocess execution not permitted in submitted solution"
+
+        # 2. Check dynamic execution functions (eval, exec, __import__)
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_FUNCS:
+                return False, f"SecurityViolation: Use of dynamic execution function '{node.func.id}'"
+            elif isinstance(node.func, ast.Attribute) and node.func.attr in FORBIDDEN_FUNCS:
+                return False, f"SecurityViolation: Use of dynamic execution function '{node.func.attr}'"
+
+        # 3. Check gadget chain attributes (__subclasses__)
+        elif isinstance(node, ast.Attribute):
+            if node.attr == "__subclasses__":
+                return False, "SecurityViolation: Introspection of __subclasses__ is forbidden"
 
     return True, "AST inspection passed"
 
@@ -97,7 +112,7 @@ async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload
     benchmark_metrics["ast_safe"] = True
 
     # 2. Subprocess Sandbox Execution
-    timeout_sec = float(task_spec.constraints.get("timeout_sec", 5.0))
+    timeout_sec = float(task_spec.constraints.get("timeout_sec", task_spec.constraints.get("timeout_seconds", 5.0)))
     max_latency_ms = task_spec.constraints.get("max_latency_ms", None)
 
     with tempfile.TemporaryDirectory() as sandbox_dir:
@@ -127,7 +142,6 @@ async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload
         # Run process
         start_time = time.perf_counter()
         try:
-            # Set isolated environment
             clean_env = os.environ.copy()
             clean_env["PYTHONPATH"] = sandbox_dir
             clean_env["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -191,8 +205,6 @@ async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload
             latency_factor = max(0.5, max_latency_ms / exec_time_ms)
             score = score * latency_factor
     else:
-        # Check partial pytest pass if available
-        # Parse pytest output like "1 passed, 2 failed"
         import re
         passed_m = re.search(r"(\d+) passed", stdout_str)
         failed_m = re.search(r"(\d+) failed", stdout_str)

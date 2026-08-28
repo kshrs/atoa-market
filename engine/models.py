@@ -1,17 +1,18 @@
 """
 Core Data Models for the ATOA Autonomous Verifier / Evaluator Engine.
+Aligned with ATOA Engineering Sprint 4-Developer Work Split-Up Spec.
 """
+import time
 from typing import Literal, Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 
 
 class TaskManifest(BaseModel):
     task_id: str
-    task_type: Literal["coding", "research", "query_matching", "general"] = "general"
-    prompt: str
+    task_type: Literal["code_generation", "coding", "research", "query", "query_matching", "general"] = "general"
+    prompt: str = ""
     spec_schema: Optional[Dict[str, Any]] = None
     constraints: Dict[str, Any] = Field(default_factory=dict)
-    # e.g., {"timeout_sec": 5.0, "max_memory_mb": 256, "passing_score": 0.8, "required_keywords": [...]}
     test_suite: Optional[str] = None  # python test code or assertions
     ground_truth_references: List[str] = Field(default_factory=list)
     slashing_threshold: float = 0.30  # Below this score, trigger slashing recommendation
@@ -21,7 +22,7 @@ class TaskManifest(BaseModel):
 class DeliverablePayload(BaseModel):
     task_id: str
     worker_id: Optional[str] = None
-    task_type: Optional[Literal["coding", "research", "query_matching", "general"]] = None
+    task_type: Optional[Literal["code_generation", "coding", "research", "query", "query_matching", "general"]] = None
     submitted_code: Optional[str] = None
     submitted_files: Dict[str, str] = Field(default_factory=dict)  # filename -> content
     submitted_data: Optional[Dict[str, Any]] = None
@@ -50,3 +51,18 @@ class EvaluationResult(BaseModel):
             "slashing_recommended": self.slashing_recommended,
             "details": self.details,
         }
+
+
+class VerificationReport(BaseModel):
+    """
+    Formal I/O Contract Return Schema for Developer `bk` (Programmatic Verification Bots)
+    consumed directly by `kshrs` (Lead Backend & MCP) to trigger `ashb` on-chain escrow/slashing.
+    """
+    task_id: str
+    category: str                 # "code_generation" | "research" | "query"
+    passed: bool                  # True if deterministic criteria satisfied; False otherwise
+    score: float                  # Quality score 0.0 to 1.0
+    validation_details: Dict[str, Any] = Field(default_factory=dict)
+    error_message: Optional[str] = None
+    logs: str = ""
+    timestamp: float = Field(default_factory=time.time)

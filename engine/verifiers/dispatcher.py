@@ -13,11 +13,15 @@ logger = logging.getLogger("atoa.verifier.dispatcher")
 
 
 def _infer_task_type(task_spec: TaskManifest, deliverable: DeliverablePayload) -> str:
-    """Infer task type if set to general or unspecified."""
-    if task_spec.task_type and task_spec.task_type != "general":
-        return task_spec.task_type
-    if deliverable.task_type and deliverable.task_type != "general":
-        return deliverable.task_type
+    """Infer and normalize task type."""
+    t_type = task_spec.task_type or deliverable.task_type or "general"
+    
+    if t_type in ("code_generation", "coding"):
+        return "coding"
+    if t_type == "research":
+        return "research"
+    if t_type in ("query", "query_matching"):
+        return "query_matching"
     
     # Infer based on payload contents
     if deliverable.submitted_code or task_spec.test_suite or "solution.py" in deliverable.submitted_files:
@@ -37,7 +41,6 @@ async def dispatch_evaluation(
     """
     Unified entry point for task verification.
     """
-    # Normalize inputs to Pydantic models if dict passed
     if isinstance(task_spec, dict):
         task_spec = TaskManifest(**task_spec)
     if isinstance(deliverable, dict):
@@ -50,7 +53,7 @@ async def dispatch_evaluation(
             return await verify_coding(task_spec, deliverable)
         elif task_type == "research":
             return await verify_researcher(task_spec, deliverable)
-        elif task_type in ("query_matching", "general"):
+        elif task_type == "query_matching":
             return await verify_matcher(task_spec, deliverable)
         else:
             return EvaluationResult(

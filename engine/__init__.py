@@ -1,7 +1,15 @@
 """
 ATOA Verifier / Evaluator Agent Engine Package.
 """
-from engine.models import TaskManifest, DeliverablePayload, EvaluationResult
-from engine.verifier_engine import evaluate_task
+from engine.models import TaskManifest, DeliverablePayload, EvaluationResult, VerificationReport
+from engine.verifier_engine import evaluate_task, evaluate_task_sync, atoa_submit_verdict
 
-__all__ = ["TaskManifest", "DeliverablePayload", "EvaluationResult", "evaluate_task"]
+__all__ = [
+    "TaskManifest", 
+    "DeliverablePayload", 
+    "EvaluationResult", 
+    "VerificationReport",
+    "evaluate_task",
+    "evaluate_task_sync",
+    "atoa_submit_verdict",
+]
