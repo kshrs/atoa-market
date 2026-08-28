@@ -21,7 +21,7 @@ def test_code_generation_honest_settlement():
         "timeout_seconds": 120,
         "requester_address": "0xRequester_A1",
         "validation_spec": {
-            "test_suite_code": "assert sum_squares([1, 2, 3]) == 14\nassert sum_squares([]) == 0"
+            "test_suite_code": "from solution import sum_squares\ndef test_sum_squares():\n    assert sum_squares([1, 2, 3]) == 14\n    assert sum_squares([]) == 0"
         }
     })
     assert task_res.status_code == 201
@@ -69,7 +69,7 @@ def test_malicious_worker_slashing():
         "timeout_seconds": 120,
         "requester_address": "0xRequester_A1",
         "validation_spec": {
-            "test_suite_code": "assert rev_str('hello') == 'olleh'"
+            "test_suite_code": "from solution import rev_str\ndef test_rev():\n    assert rev_str('hello') == 'olleh'"
         }
     })
     assert task_res.status_code == 201
