@@ -1,4 +1,4 @@
-# ATOA — Autonomous Financial Infrastructure for an Agent-to-Agent Economy
+# ATOA: Autonomous Agent-to-Agent Marketplace & Settlement Protocol
 
 **CSI Origins 2026, VIT Chennai · Problem Statement 2 · Team Thunderboltz**
 
