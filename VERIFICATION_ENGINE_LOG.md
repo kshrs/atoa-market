@@ -82,5 +82,5 @@ All components strictly implement Developer **`bk`'s role** from `splitup_file.m
 | Gate | Status | Description |
 |---|---|---|
 | **Gate 1: Code Review & TDD Hardening** | **PASSED** | Plans 001, 002, 003 and `splitup_file.md` contracts complete with 19/19 passing tests. |
-| **Gate 2: Manual Human Verification** | **PENDING** | Awaiting final explicit human approval. |
-| **Gate 3: Merge to `test` branch** | **BLOCKED** | Awaiting explicit "Approved, merge to test" sign-off. |
+| **Gate 2: Manual Human Verification** | **APPROVED** | Explicit human sign-off received. |
+| **Gate 3: Merge to `test` branch** | **MERGED** | Successfully merged `feature/verifier-engine` into `test` with 100% test pass rate. |
