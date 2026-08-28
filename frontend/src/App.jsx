@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { fetchTasks, fetchWallets, subscribeToLiveEvents } from './api';
+import { INITIAL_AGENTS, INITIAL_OPEN_TASKS, INITIAL_COMPLETED_TASKS, simulateAgentStep } from './mockData';
 
 // ----------------------------------------------------------------------
 // HELPER: CLEAN AGENT NAME & AVATAR FORMATTER
@@ -22,7 +23,6 @@ function getAgentColor(nameOrId = '') {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
-// Formats agent names precisely based on address and explicit names
 function formatAgentName(rawName = '', address = '') {
   if (rawName && !rawName.startsWith('Agent_0x')) return rawName;
   const identifier = (rawName || address || '').toLowerCase();
@@ -116,7 +116,6 @@ export function ActiveAgentsPanel({ agents }) {
                         <span className="text-sm font-bold text-slate-900 font-mono truncate">
                           {displayName}
                         </span>
-                        {/* Live Reputation Badge */}
                         <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-800 border border-indigo-200">
                           ★ {repScore}
                         </span>
@@ -172,7 +171,7 @@ export function BiddingPlaceBoard({ openTasks }) {
       <div className="flex-1 overflow-y-auto pt-3 space-y-3 pr-1">
         {openTasks.length === 0 ? (
           <div className="h-full flex items-center justify-center font-mono text-xs text-slate-400 text-center p-4">
-            No open auctions. Publish a task using `atoa_create_task` from agy-cli...
+            No open auctions. Awaiting new task broadcasts...
           </div>
         ) : (
           openTasks.map((task, idx) => {
@@ -303,7 +302,7 @@ export function CompletedWorksBoard({ completedTasks }) {
       <div className="flex-1 overflow-y-auto pt-3 space-y-3 pr-1">
         {completedTasks.length === 0 ? (
           <div className="h-full flex items-center justify-center font-mono text-xs text-slate-400 text-center p-4">
-            No completed works yet. Completed tasks from agy-cli workers will settle here.
+            No completed works yet. Settled tasks will display here.
           </div>
         ) : (
           completedTasks.map((task, idx) => {
@@ -396,22 +395,23 @@ export function CompletedWorksBoard({ completedTasks }) {
 }
 
 // ----------------------------------------------------------------------
-// MAIN CONTAINER COMPONENT (100% REAL-TIME FROM AGY-CLI & BACKEND)
+// MAIN CONTAINER COMPONENT (HYBRID: LIVE BACKEND + AUTOMATIC GH PAGES SIMULATOR)
 // ----------------------------------------------------------------------
 export default function App() {
-  const [agents, setAgents] = useState([]);
-  const [openTasks, setOpenTasks] = useState([]);
-  const [completedTasks, setCompletedTasks] = useState([]);
+  const [agents, setAgents] = useState(INITIAL_AGENTS);
+  const [openTasks, setOpenTasks] = useState(INITIAL_OPEN_TASKS);
+  const [completedTasks, setCompletedTasks] = useState(INITIAL_COMPLETED_TASKS);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
 
+  // 1. Initial REST Sync with FastAPI backend
   const syncWithBackend = useCallback(async () => {
     const liveWallets = await fetchWallets();
-    if (liveWallets) {
+    if (liveWallets && liveWallets.length > 0) {
       setAgents(liveWallets);
     }
 
     const liveTasks = await fetchTasks();
-    if (liveTasks) {
+    if (liveTasks && liveTasks.length > 0) {
       const open = liveTasks.filter((t) => t.status !== 'SETTLED' && t.status !== 'SLASHED');
       const closed = liveTasks.filter((t) => t.status === 'SETTLED' || t.status === 'SLASHED');
       setOpenTasks(open);
@@ -423,6 +423,7 @@ export default function App() {
     syncWithBackend();
   }, [syncWithBackend]);
 
+  // 2. Real-Time WebSocket Telemetry
   useEffect(() => {
     const unsubscribe = subscribeToLiveEvents(
       (event) => {
@@ -435,6 +436,30 @@ export default function App() {
 
     return unsubscribe;
   }, [syncWithBackend]);
+
+  // 3. Autonomous In-Browser Simulator for GitHub Pages (Active whenever live backend is offline)
+  useEffect(() => {
+    if (isLiveConnected) return;
+
+    const interval = setInterval(() => {
+      setOpenTasks((prevOpen) => {
+        setCompletedTasks((prevCompleted) => {
+          setAgents((prevAgents) => {
+            const res = simulateAgentStep(prevOpen, prevCompleted, prevAgents);
+            // Update other states inside synchronized step
+            setCompletedTasks(res.completed);
+            setAgents(res.agents);
+            return res.agents;
+          });
+          return prevCompleted;
+        });
+        const res = simulateAgentStep(prevOpen, completedTasks, agents);
+        return res.tasks;
+      });
+    }, 4500);
+
+    return () => clearInterval(interval);
+  }, [isLiveConnected, completedTasks, agents]);
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#fdfbf7] text-slate-900 p-4 font-sans overflow-hidden select-none">
@@ -459,10 +484,10 @@ export default function App() {
           <div className="flex items-center gap-2 px-3 py-1 rounded-xl text-xs font-mono font-bold bg-white border-2 border-slate-900 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]">
             <span
               className={`w-2.5 h-2.5 rounded-full border border-slate-900 ${
-                isLiveConnected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'
+                isLiveConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
               }`}
             />
-            <span>{isLiveConnected ? 'Live agy-cli Stream Connected' : 'Waiting for Backend...'}</span>
+            <span>{isLiveConnected ? 'Live agy-cli Stream Connected' : 'Autonomous Web Simulation (GitHub Pages)'}</span>
           </div>
         </div>
       </header>
