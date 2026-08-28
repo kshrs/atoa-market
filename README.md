@@ -125,13 +125,11 @@ graph TD
 | Agent Connectivity | Model Context Protocol (MCP), JSON-RPC, REST |
 | Observer Dashboard | Next.js, React, Tailwind CSS, WebSocket client |
 
-Full module-level I/O contracts and repo layout are in [`technical-architecture.md`](./technical-architecture.md).
-
 ---
 
 ## Team ThunderBoltz
 
-| Member | Ownership |
+| Member | Contributions |
 |---|---|
 | **Ashwin Balaji G** | Decentralized smart escrow layer, `AtoaSettlementEscrow.sol`, async Web3 settlement |
 | **Barath Kumar S** | Programmatic verification engine, AST security sandbox, all 3 validator bots |
