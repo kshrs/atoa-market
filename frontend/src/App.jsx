@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { fetchTasks, fetchWallets, subscribeToLiveEvents } from './api';
 
 // ----------------------------------------------------------------------
-// HELPER: AGENT AVATAR & COLOR GENERATOR
+// HELPER: CLEAN AGENT NAME & AVATAR FORMATTER
 // ----------------------------------------------------------------------
 const AVATAR_COLORS = [
   { bg: 'bg-amber-100', text: 'text-amber-800', border: 'border-amber-300' },
@@ -22,18 +22,27 @@ function getAgentColor(nameOrId = '') {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
+function formatAgentName(rawName = '', address = '') {
+  const identifier = (rawName || address).toLowerCase();
+  if (identifier.includes('code') || identifier.includes('optimizer')) return 'Code Agent';
+  if (identifier.includes('research') || identifier.includes('researcher')) return 'Research Agent';
+  if (identifier.includes('query') || identifier.includes('oracle')) return 'Query Agent';
+  if (identifier.includes('requester') || identifier.includes('daemon')) return 'Delegator Daemon';
+  if (rawName && !rawName.startsWith('Agent_0x')) return rawName;
+  return 'Delegator Agent';
+}
+
 function getShortLabel(nameOrAddress = '') {
-  if (!nameOrAddress) return 'AG';
-  if (nameOrAddress.includes('AG-')) return nameOrAddress;
-  if (nameOrAddress.toLowerCase().includes('requester')) return 'REQ';
-  if (nameOrAddress.toLowerCase().includes('optimizer') || nameOrAddress.toLowerCase().includes('alpha')) return 'AG-1';
-  if (nameOrAddress.toLowerCase().includes('researcher') || nameOrAddress.toLowerCase().includes('beta')) return 'AG-2';
-  if (nameOrAddress.toLowerCase().includes('rogue')) return 'ROG';
+  const formatted = formatAgentName(nameOrAddress, nameOrAddress);
+  if (formatted === 'Code Agent') return 'CODE';
+  if (formatted === 'Research Agent') return 'RSCH';
+  if (formatted === 'Query Agent') return 'QRY';
+  if (formatted.includes('Delegator')) return 'REQ';
   return (nameOrAddress.slice(0, 4) || 'AG').toUpperCase();
 }
 
 // ----------------------------------------------------------------------
-// 1. ACTIVE AGENTS PANEL (LEFT ZONE - Live Delegators & Bidders)
+// 1. ACTIVE AGENTS PANEL (LEFT ZONE - Clean & Live)
 // ----------------------------------------------------------------------
 export function ActiveAgentsPanel({ agents }) {
   return (
@@ -53,7 +62,7 @@ export function ActiveAgentsPanel({ agents }) {
         <div className="flex items-center gap-4 mt-3 text-xs font-mono text-slate-600">
           <div className="flex items-center gap-1.5">
             <span className="w-3.5 h-3.5 rounded-full bg-amber-200 border-2 border-slate-800 inline-block" />
-            <span className="font-semibold">Delegation</span>
+            <span className="font-semibold">Delegator</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-3.5 h-3.5 rounded-full bg-rose-200 border-2 border-slate-800 inline-block" />
@@ -66,19 +75,20 @@ export function ActiveAgentsPanel({ agents }) {
       <div className="flex-1 overflow-y-auto pt-4 space-y-3 pr-1">
         {agents.length === 0 ? (
           <div className="h-full flex items-center justify-center font-mono text-xs text-slate-400 text-center p-4">
-            No agents active yet. Run agy-cli with atoa-marketplace MCP to register agents dynamically.
+            No agents active yet. Launch `agents_demo/run_all_workers.py` or post a task from agy-cli...
           </div>
         ) : (
           <AnimatePresence>
             {agents.map((agent) => {
+              const displayName = formatAgentName(agent.name, agent.address);
               const isDelegation =
                 agent.role === 'Delegator' ||
                 agent.role === 'Requester' ||
-                (agent.name && agent.name.toLowerCase().includes('requester'));
+                displayName.includes('Delegator');
 
               const roleTitle = isDelegation ? 'Delegator' : 'Bidder';
-              const color = getAgentColor(agent.name || agent.address);
-              const shortLabel = getShortLabel(agent.name || agent.address);
+              const color = getAgentColor(displayName);
+              const shortLabel = getShortLabel(displayName);
 
               return (
                 <motion.div
@@ -96,10 +106,8 @@ export function ActiveAgentsPanel({ agents }) {
                       {shortLabel}
                     </div>
                     <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-sm font-bold text-slate-900 font-mono truncate">
-                          {agent.name || agent.address}
-                        </span>
+                      <div className="text-sm font-bold text-slate-900 font-mono truncate">
+                        {displayName}
                       </div>
                       <div className="text-xs text-slate-500 font-mono">
                         <span className="font-semibold text-slate-700">{roleTitle}</span> • {agent.balance_usdc != null ? `${agent.balance_usdc} USDC` : ''}
@@ -129,7 +137,7 @@ export function ActiveAgentsPanel({ agents }) {
 }
 
 // ----------------------------------------------------------------------
-// 2. BIDDING PLACE BOARD (TOP RIGHT ZONE - Live from agy-cli / backend)
+// 2. BIDDING PLACE BOARD (TOP RIGHT ZONE - Real-time Multi-Round Bidding)
 // ----------------------------------------------------------------------
 export function BiddingPlaceBoard({ openTasks }) {
   return (
@@ -154,13 +162,14 @@ export function BiddingPlaceBoard({ openTasks }) {
           </div>
         ) : (
           openTasks.map((task, idx) => {
-            const assigneeName = task.requester_address || task.assignee?.name || 'Requester';
+            const rawAssignee = task.requester_address || task.assignee?.name || 'Delegator';
+            const assigneeName = formatAgentName(rawAssignee, rawAssignee);
             const assigneeShort = getShortLabel(assigneeName);
             const assigneeColor = getAgentColor(assigneeName);
 
-            const winnerName =
-              task.assigned_worker || (task.bids && task.bids.find(b => b.status === 'ACCEPTED')?.worker_address) || 'Pending';
-            const winnerShort = getShortLabel(winnerName);
+            const rawWinner = task.assigned_worker || (task.bids && task.bids.find(b => b.status === 'ACCEPTED')?.worker_address);
+            const winnerName = rawWinner ? formatAgentName(rawWinner, rawWinner) : 'Pending';
+            const winnerShort = rawWinner ? getShortLabel(winnerName) : '...';
             const winnerColor = getAgentColor(winnerName);
 
             const bidsList = task.bids || [];
@@ -221,14 +230,15 @@ export function BiddingPlaceBoard({ openTasks }) {
                     {bidsList.length > 0 ? (
                       bidsList.map((bid, bIdx) => {
                         const bAddress = bid.worker_address || bid.agentName || bid.bidderId;
-                        const bShort = getShortLabel(bAddress);
-                        const bColor = getAgentColor(bAddress);
+                        const bName = formatAgentName(bAddress, bAddress);
+                        const bShort = getShortLabel(bName);
+                        const bColor = getAgentColor(bName);
                         const bPrice = bid.bid_price_usdc != null ? bid.bid_price_usdc : bid.price;
                         return (
                           <div
                             key={bIdx}
                             className="flex flex-col items-center flex-shrink-0"
-                            title={`${bAddress}: $${bPrice} USDC`}
+                            title={`${bName}: $${bPrice} USDC`}
                           >
                             <div
                               className={`w-8 h-8 rounded-full border-2 border-slate-900 flex items-center justify-center font-mono text-[10px] font-bold ${bColor.bg} ${bColor.text}`}
@@ -258,7 +268,7 @@ export function BiddingPlaceBoard({ openTasks }) {
 }
 
 // ----------------------------------------------------------------------
-// 3. COMPLETED WORKS BOARD (BOTTOM RIGHT ZONE - Live from agy-cli / backend)
+// 3. COMPLETED WORKS BOARD (BOTTOM RIGHT ZONE - Verified & Settled)
 // ----------------------------------------------------------------------
 export function CompletedWorksBoard({ completedTasks }) {
   return (
@@ -282,11 +292,13 @@ export function CompletedWorksBoard({ completedTasks }) {
         ) : (
           completedTasks.map((task, idx) => {
             const isSlashed = task.status === 'SLASHED' || task.status === 'Failed';
-            const assigneeName = task.requester_address || task.assignee?.name || 'Requester';
+            const rawAssignee = task.requester_address || task.assignee?.name || 'Delegator';
+            const assigneeName = formatAgentName(rawAssignee, rawAssignee);
             const assigneeShort = getShortLabel(assigneeName);
             const assigneeColor = getAgentColor(assigneeName);
 
-            const winnerName = task.assigned_worker || task.winner?.name || 'Winner Node';
+            const rawWinner = task.assigned_worker || task.winner?.name || 'Worker Node';
+            const winnerName = formatAgentName(rawWinner, rawWinner);
             const winnerShort = getShortLabel(winnerName);
             const winnerColor = getAgentColor(winnerName);
 
@@ -370,7 +382,6 @@ export default function App() {
   const [completedTasks, setCompletedTasks] = useState([]);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
 
-  // Initial & Continuous REST Sync with FastAPI backend
   const syncWithBackend = useCallback(async () => {
     const liveWallets = await fetchWallets();
     if (liveWallets) {
@@ -390,12 +401,9 @@ export default function App() {
     syncWithBackend();
   }, [syncWithBackend]);
 
-  // Real-Time WebSocket Telemetry
   useEffect(() => {
     const unsubscribe = subscribeToLiveEvents(
       (event) => {
-        console.log('[ATOA Live Event]', event);
-        // Instant full-state sync when any action happens from agy-cli
         syncWithBackend();
       },
       (status) => {
