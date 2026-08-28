@@ -49,6 +49,13 @@ class EventType(str, Enum):
     WALLET_UPDATED = "WALLET_UPDATED"
 
 
+class EventEnvelope(BaseModel):
+    event_id: str = Field(default_factory=lambda: f"evt_{uuid.uuid4().hex[:8]}")
+    event_type: EventType
+    data: Dict[str, Any]
+    timestamp: float = Field(default_factory=time.time)
+
+
 # ---------------------------------------------------------------------------
 # Task & Bid Models
 # ---------------------------------------------------------------------------
@@ -85,13 +92,13 @@ class BidResponse(BaseModel):
 
 
 class TaskCreate(BaseModel):
-    title: str = Field(..., min_length=3, max_length=200, example="Optimize Matrix Multiplication")
-    category: TaskCategory = Field(..., example=TaskCategory.CODE_GENERATION)
-    description: str = Field(..., min_length=5, example="Write an O(N^2.8) vectorized Strassen matrix multiplication routine.")
-    budget_usdc: float = Field(..., gt=0.0, example=50.0)
-    required_worker_bond: float = Field(..., ge=0.0, example=5.0)
+    title: str = Field(..., min_length=3, max_length=200, json_schema_extra={"example": "Optimize Matrix Multiplication"})
+    category: TaskCategory = Field(..., json_schema_extra={"example": TaskCategory.CODE_GENERATION})
+    description: str = Field(..., min_length=5, json_schema_extra={"example": "Write an O(N^2.8) vectorized Strassen matrix multiplication routine."})
+    budget_usdc: float = Field(..., gt=0.0, json_schema_extra={"example": 50.0})
+    required_worker_bond: float = Field(..., ge=0.0, json_schema_extra={"example": 5.0})
     timeout_seconds: int = Field(default=300, ge=10, le=3600)
-    requester_address: str = Field(..., example="0x1B4...9A8")
+    requester_address: str = Field(..., json_schema_extra={"example": "0x1B4...9A8"})
     validation_spec: ValidationSpec = Field(default_factory=ValidationSpec)
 
 
@@ -109,10 +116,12 @@ class TaskResponse(BaseModel):
     assigned_worker: Optional[str] = None
     winning_bid_id: Optional[str] = None
     escrow_locked: bool = False
+    settlement_tx_hash: Optional[str] = None
     bids: List[BidResponse] = Field(default_factory=list)
     created_at: float = Field(default_factory=time.time)
     assigned_at: Optional[float] = None
     settled_at: Optional[float] = None
+    updated_at: float = Field(default_factory=time.time)
 
 
 # ---------------------------------------------------------------------------

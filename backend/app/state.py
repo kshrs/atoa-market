@@ -229,11 +229,16 @@ class StateStore:
                 self.bids[task_id] = []
             self.bids[task_id].append(bid)
             task.bids = self.bids[task_id]
+            task.updated_at = time.time()
             return bid
 
-    async def assign_winning_bid(self, task_id: str) -> Optional[TaskResponse]:
+    async def get_task_bids(self, task_id: str) -> List[BidResponse]:
+        async with self._lock:
+            return self.bids.get(task_id, [])
+
+    async def assign_winning_bid(self, task_id: str, selected_bid_id: Optional[str] = None) -> Optional[TaskResponse]:
         """
-        Executes multi-parameter matchmaking algorithm:
+        Executes multi-parameter matchmaking algorithm or assigns explicitly selected bid.
         Score = (Reputation * 0.40) + (Price Efficiency * 0.35) + (Domain Specialization * 0.15) + (Bond Ratio * 0.10)
         """
         async with self._lock:
@@ -245,35 +250,40 @@ class StateStore:
             if not task_bids:
                 return None
 
-            def score_bid(b: BidResponse) -> float:
-                wallet = self.wallets.get(b.worker_address)
-                rep = wallet.reputation_score if wallet else b.worker_reputation_score
-                norm_rep = min(100.0, rep)  # baseline 0-100
+            if selected_bid_id:
+                best_bid = next((b for b in task_bids if b.bid_id == selected_bid_id), None)
+                if not best_bid:
+                    return None
+            else:
+                def score_bid(b: BidResponse) -> float:
+                    wallet = self.wallets.get(b.worker_address)
+                    rep = wallet.reputation_score if wallet else b.worker_reputation_score
+                    norm_rep = min(100.0, rep)  # baseline 0-100
 
-                # 1. Price savings relative to task max budget (0 to 100)
-                price_savings = max(0.0, task.budget_usdc - b.bid_price_usdc)
-                price_score = (price_savings / max(1.0, task.budget_usdc)) * 100.0
+                    # 1. Price savings relative to task max budget (0 to 100)
+                    price_savings = max(0.0, task.budget_usdc - b.bid_price_usdc)
+                    price_score = (price_savings / max(1.0, task.budget_usdc)) * 100.0
 
-                # 2. Domain specialization match bonus
-                addr_lower = b.worker_address.lower()
-                domain_bonus = 0.0
-                if task.category == TaskCategory.CODE_GENERATION and "code" in addr_lower:
-                    domain_bonus = 30.0
-                elif task.category == TaskCategory.RESEARCH and "research" in addr_lower:
-                    domain_bonus = 30.0
-                elif task.category == TaskCategory.QUERY and ("query" in addr_lower or "oracle" in addr_lower):
-                    domain_bonus = 30.0
+                    # 2. Domain specialization match bonus
+                    addr_lower = b.worker_address.lower()
+                    domain_bonus = 0.0
+                    if task.category == TaskCategory.CODE_GENERATION and "code" in addr_lower:
+                        domain_bonus = 30.0
+                    elif task.category == TaskCategory.RESEARCH and "research" in addr_lower:
+                        domain_bonus = 30.0
+                    elif task.category == TaskCategory.QUERY and ("query" in addr_lower or "oracle" in addr_lower):
+                        domain_bonus = 30.0
 
-                # 3. Bond commitment ratio
-                bond_ratio = min(2.0, b.collateral_bond_locked / max(1.0, task.required_worker_bond))
-                bond_score = bond_ratio * 10.0
+                    # 3. Bond commitment ratio
+                    bond_ratio = min(2.0, b.collateral_bond_locked / max(1.0, task.required_worker_bond))
+                    bond_score = bond_ratio * 10.0
 
-                # Total Weighted Score
-                total_score = (norm_rep * 0.40) + (price_score * 0.35) + domain_bonus + bond_score
-                return total_score
+                    # Total Weighted Score
+                    total_score = (norm_rep * 0.40) + (price_score * 0.35) + domain_bonus + bond_score
+                    return total_score
 
-            # Sort bids descending by total matchmaking score
-            best_bid = max(task_bids, key=score_bid)
+                # Sort bids descending by total matchmaking score
+                best_bid = max(task_bids, key=score_bid)
 
             # Update bid states
             for b in task_bids:
@@ -287,6 +297,7 @@ class StateStore:
             task.winning_bid_id = best_bid.bid_id
             task.status = TaskStatus.IN_PROGRESS
             task.assigned_at = time.time()
+            task.updated_at = time.time()
             task.bids = task_bids
 
             # Touch active timestamp
@@ -299,33 +310,39 @@ class StateStore:
     # Deliverables & Settlement Lifecycle
     # -----------------------------------------------------------------------
 
-    async def submit_deliverable(self, submission: DeliverableSubmission) -> Optional[TaskResponse]:
+    async def record_deliverable(self, submission: DeliverableSubmission) -> Optional[TaskResponse]:
         async with self._lock:
             task = self.tasks.get(submission.task_id)
-            if not task or task.status != TaskStatus.IN_PROGRESS:
-                return None
-            if task.assigned_worker != submission.worker_address:
+            if not task:
                 return None
 
             self.deliverables[submission.task_id] = submission
             task.status = TaskStatus.VERIFYING
+            task.updated_at = time.time()
             if submission.worker_address in self.wallets:
                 self.wallets[submission.worker_address].last_active_at = time.time()
             return task
 
-    async def record_verification_and_settle(self, report: VerificationReport) -> Optional[TaskResponse]:
+    async def record_verification_and_settle(
+        self,
+        task_id: str,
+        report: VerificationReport,
+        settlement_tx_hash: Optional[str] = None
+    ) -> Optional[TaskResponse]:
         async with self._lock:
-            task = self.tasks.get(report.task_id)
+            task = self.tasks.get(task_id)
             if not task:
                 return None
 
-            self.verification_reports[report.task_id] = report
+            self.verification_reports[task_id] = report
             if report.passed:
                 task.status = TaskStatus.SETTLED
             else:
                 task.status = TaskStatus.SLASHED
 
+            task.settlement_tx_hash = settlement_tx_hash
             task.settled_at = time.time()
+            task.updated_at = time.time()
             task.bids = self.bids.get(task.task_id, [])
             return task
 
