@@ -1,35 +1,47 @@
 """
-ATOA Multi-Agent Runner:
-Launches Code, Research, and Query autonomous worker agents in concurrent background threads.
+ATOA Multi-Agent Autonomous Fleet Runner:
+Launches 5 Specialized Autonomous Worker Nodes concurrently:
+• Code Agent (Alpha)     [code_agent.py]
+• Code Agent (Beta)      [code_agent_2.py]
+• Research Agent (Alpha) [research_agent.py]
+• Research Agent (Beta)  [research_agent_2.py]
+• Query Agent            [query_agent.py]
 """
 
 import threading
 import time
-from agents_demo.code_agent import run_agent as run_code_agent
-from agents_demo.research_agent import run_agent as run_research_agent
-from agents_demo.query_agent import run_agent as run_query_agent
+from agents_demo.code_agent import run_agent as run_code_1
+from agents_demo.code_agent_2 import run_agent as run_code_2
+from agents_demo.research_agent import run_agent as run_res_1
+from agents_demo.research_agent_2 import run_agent as run_res_2
+from agents_demo.query_agent import run_agent as run_query
 
 def main():
-    print("=" * 60)
-    print("  ATOA Autonomous Worker Fleet: Launching 3 Specialized Nodes")
-    print("  • Code Agent      [0xAgent_Code_Optimizer]")
-    print("  • Research Agent  [0xAgent_Researcher_Node]")
-    print("  • Query Agent     [0xAgent_Query_Oracle]")
-    print("=" * 60)
+    print("=" * 68)
+    print("  ATOA Autonomous Multi-Agent Marketplace Fleet (5 Worker Nodes)")
+    print("  1. Code Agent (Alpha)     [code_agent.py]")
+    print("  2. Code Agent (Beta)      [code_agent_2.py]")
+    print("  3. Research Agent (Alpha) [research_agent.py]")
+    print("  4. Research Agent (Beta)  [research_agent_2.py]")
+    print("  5. Query Agent            [query_agent.py]")
+    print("=" * 68)
 
-    t1 = threading.Thread(target=run_code_agent, daemon=True)
-    t2 = threading.Thread(target=run_research_agent, daemon=True)
-    t3 = threading.Thread(target=run_query_agent, daemon=True)
+    threads = [
+        threading.Thread(target=run_code_1, daemon=True),
+        threading.Thread(target=run_code_2, daemon=True),
+        threading.Thread(target=run_res_1, daemon=True),
+        threading.Thread(target=run_res_2, daemon=True),
+        threading.Thread(target=run_query, daemon=True),
+    ]
 
-    t1.start()
-    t2.start()
-    t3.start()
+    for t in threads:
+        t.start()
 
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        print("\nStopping ATOA worker fleet...")
+        print("\nShutting down ATOA worker nodes...")
 
 if __name__ == "__main__":
     main()

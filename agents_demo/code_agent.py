@@ -1,9 +1,6 @@
 """
-ATOA Autonomous Worker Agent: Code Generator & Optimizer
-Polls backend for 'code_generation' tasks.
-Features:
-1. Multi-round competitive bidding (starts high at 98% of budget, steps down to 88% over ~3 seconds).
-2. Immediate deliverable synthesis upon assignment to ensure prompt verification & settlement.
+ATOA Autonomous Worker Agent: Code Agent (Alpha Optimizer)
+Specialization: High-performance code generation, algorithms, vectorized computation.
 """
 
 import time
@@ -11,12 +8,12 @@ import requests
 import json
 import logging
 
-logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [CODE_AGENT] %(message)s")
-logger = logging.getLogger("CodeAgent")
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [CODE_AGENT_1] %(message)s")
+logger = logging.getLogger("CodeAgent1")
 
 API_BASE = "http://localhost:8000"
-AGENT_ADDRESS = "0xAgent_Code_Optimizer"
-AGENT_NAME = "Code Agent"
+AGENT_ADDRESS = "0xAgent_Code_Optimizer_1"
+AGENT_NAME = "Code Agent (Alpha)"
 CATEGORY = "code_generation"
 
 
@@ -35,7 +32,6 @@ def ensure_wallet():
 
 
 def solve_code_task(task):
-    """Generates code deliverable tailored to the prompt & test suite."""
     title = task.get("title", "").lower()
     desc = task.get("description", "").lower()
     val_spec = task.get("validation_spec", {})
@@ -86,7 +82,7 @@ def solve_code_task(task):
 def run_agent():
     ensure_wallet()
     logger.info(f"{AGENT_NAME} active. Polling for category '{CATEGORY}'...")
-    bidding_history = {}  # task_id -> list of bid timestamps / count
+    bidding_history = {}
     submitted_tasks = set()
 
     while True:
@@ -98,7 +94,6 @@ def run_agent():
                     task_id = task.get("task_id")
                     status = task.get("status")
 
-                    # Step 1: Multi-round realistic bidding (3-second duration, starts high)
                     if status in ["BROADCASTED", "MATCHING"]:
                         budget = task.get("budget_usdc", 50.0)
                         bond = task.get("required_worker_bond", 5.0)
@@ -106,7 +101,7 @@ def run_agent():
                         now = time.time()
                         history = bidding_history.get(task_id, {"bids": 0, "first_bid_time": 0})
 
-                        # Bid Round 1: Starts high (98% of budget)
+                        # Round 1: High start (98% of budget)
                         if history["bids"] == 0:
                             high_bid = round(budget * 0.98, 2)
                             bid_payload = {
@@ -121,9 +116,9 @@ def run_agent():
                                 logger.info(f"Round 1: Placed high bid of ${high_bid} USDC on task {task_id}")
                                 bidding_history[task_id] = {"bids": 1, "first_bid_time": now}
 
-                        # Bid Round 2: Compete down slightly after ~1.5 seconds (93% of budget)
+                        # Round 2: Compete down slightly after ~1.5 seconds (92% of budget)
                         elif history["bids"] == 1 and (now - history["first_bid_time"]) >= 1.5:
-                            comp_bid = round(budget * 0.93, 2)
+                            comp_bid = round(budget * 0.92, 2)
                             bid_payload = {
                                 "worker_address": AGENT_ADDRESS,
                                 "bid_price_usdc": comp_bid,
@@ -136,9 +131,9 @@ def run_agent():
                                 logger.info(f"Round 2: Placed revised bid of ${comp_bid} USDC on task {task_id}")
                                 bidding_history[task_id]["bids"] = 2
 
-                        # Bid Round 3: Final best offer after ~3.0 seconds (88% of budget)
+                        # Round 3: Final best offer after ~3.0 seconds (86% of budget)
                         elif history["bids"] == 2 and (now - history["first_bid_time"]) >= 3.0:
-                            final_bid = round(budget * 0.88, 2)
+                            final_bid = round(budget * 0.86, 2)
                             bid_payload = {
                                 "worker_address": AGENT_ADDRESS,
                                 "bid_price_usdc": final_bid,
@@ -151,7 +146,6 @@ def run_agent():
                                 logger.info(f"Round 3: Placed optimal bid of ${final_bid} USDC on task {task_id}")
                                 bidding_history[task_id]["bids"] = 3
 
-                    # Step 2: Immediate deliverable submission once assigned
                     elif status == "IN_PROGRESS" and task.get("assigned_worker") == AGENT_ADDRESS and task_id not in submitted_tasks:
                         code_deliverable = solve_code_task(task)
                         sub_payload = {

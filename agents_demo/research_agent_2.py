@@ -1,6 +1,7 @@
 """
-ATOA Autonomous Worker Agent: Research Agent (Alpha Synthesizer)
-Specialization: Literature synthesis, tokenomics, schema-compliant JSON reports.
+ATOA Autonomous Worker Agent: Research Agent (Beta Semantic & Data-Mining Specialist)
+Specialization: Quantitative research, semantic analysis, structured JSON outputs.
+Competes dynamically with Research Agent (Alpha) on research tasks.
 """
 
 import time
@@ -8,12 +9,12 @@ import requests
 import json
 import logging
 
-logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [RESEARCH_AGENT_1] %(message)s")
-logger = logging.getLogger("ResearchAgent1")
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [RESEARCH_AGENT_2] %(message)s")
+logger = logging.getLogger("ResearchAgent2")
 
 API_BASE = "http://localhost:8000"
-AGENT_ADDRESS = "0xAgent_Researcher_Node_1"
-AGENT_NAME = "Research Agent (Alpha)"
+AGENT_ADDRESS = "0xAgent_Researcher_Node_2"
+AGENT_NAME = "Research Agent (Beta)"
 CATEGORY = "research"
 
 
@@ -37,12 +38,12 @@ def solve_research_task(task):
     title = task.get("title", "")
     desc = task.get("description", "")
 
-    logger.info(f"Synthesizing research for '{title}'...")
+    logger.info(f"Synthesizing structured quantitative research for '{title}'...")
 
     research_payload = {
         "title": title,
-        "executive_summary": f"Comprehensive empirical analysis on {title}. {desc}",
-        "methodology": "Systematic literature extraction, token alignment, and consensus verification.",
+        "executive_summary": f"In-depth empirical research on {title}. {desc}",
+        "methodology": "Decentralized oracle benchmarking, statistical validation, and game-theoretic stress testing.",
         "findings": [
             "Autonomous zero-trust coordination reduces settlement friction by 94%.",
             "Collateral bonding provides strong game-theoretic anti-Sybil guarantees."
@@ -50,7 +51,7 @@ def solve_research_task(task):
         "citations": [
             {"claim": "consensus", "source": "https://arxiv.org/abs/2301.00001"}
         ],
-        "confidence_score": 0.96
+        "confidence_score": 0.98
     }
 
     for k in required_keys:
@@ -82,45 +83,45 @@ def run_agent():
                         now = time.time()
                         history = bidding_history.get(task_id, {"bids": 0, "first_bid_time": 0})
 
-                        # Round 1: High start (97% of budget)
+                        # Round 1: High start (95% of budget)
                         if history["bids"] == 0:
-                            high_bid = round(budget * 0.97, 2)
+                            high_bid = round(budget * 0.95, 2)
                             bid_payload = {
                                 "worker_address": AGENT_ADDRESS,
                                 "bid_price_usdc": high_bid,
                                 "collateral_bond_locked": bond,
-                                "estimated_duration_seconds": 45,
-                                "notes": f"Initial research quote from {AGENT_NAME}"
+                                "estimated_duration_seconds": 38,
+                                "notes": f"Quantitative research quote by {AGENT_NAME}"
                             }
                             b_res = requests.post(f"{API_BASE}/v1/tasks/{task_id}/bids", json=bid_payload)
                             if b_res.status_code in [200, 201]:
                                 logger.info(f"Round 1: Placed high bid of ${high_bid} USDC on task {task_id}")
                                 bidding_history[task_id] = {"bids": 1, "first_bid_time": now}
 
-                        # Round 2: Step down after ~1.5s (91% of budget)
+                        # Round 2: Compete down after ~1.5s (88% of budget)
                         elif history["bids"] == 1 and (now - history["first_bid_time"]) >= 1.5:
-                            comp_bid = round(budget * 0.91, 2)
+                            comp_bid = round(budget * 0.88, 2)
                             bid_payload = {
                                 "worker_address": AGENT_ADDRESS,
                                 "bid_price_usdc": comp_bid,
                                 "collateral_bond_locked": bond,
-                                "estimated_duration_seconds": 35,
-                                "notes": f"Discounted research rate by {AGENT_NAME}"
+                                "estimated_duration_seconds": 30,
+                                "notes": f"Accelerated analysis discount by {AGENT_NAME}"
                             }
                             b_res = requests.post(f"{API_BASE}/v1/tasks/{task_id}/bids", json=bid_payload)
                             if b_res.status_code in [200, 201]:
                                 logger.info(f"Round 2: Placed revised bid of ${comp_bid} USDC on task {task_id}")
                                 bidding_history[task_id]["bids"] = 2
 
-                        # Round 3: Final best offer after ~3.0s (85% of budget)
+                        # Round 3: Final best offer after ~3.0s (83% of budget)
                         elif history["bids"] == 2 and (now - history["first_bid_time"]) >= 3.0:
-                            final_bid = round(budget * 0.85, 2)
+                            final_bid = round(budget * 0.83, 2)
                             bid_payload = {
                                 "worker_address": AGENT_ADDRESS,
                                 "bid_price_usdc": final_bid,
                                 "collateral_bond_locked": bond,
-                                "estimated_duration_seconds": 25,
-                                "notes": f"Final optimal research rate by {AGENT_NAME}"
+                                "estimated_duration_seconds": 22,
+                                "notes": f"Best quantitative rate by {AGENT_NAME}"
                             }
                             b_res = requests.post(f"{API_BASE}/v1/tasks/{task_id}/bids", json=bid_payload)
                             if b_res.status_code in [200, 201]:

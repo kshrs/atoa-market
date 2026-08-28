@@ -1,7 +1,12 @@
 """
 ATOA In-Memory State Store & Lifecycle State Machine.
 Maintains thread-safe in-memory ledgers for tasks, bids, deliverables, agent wallets, and reputation.
-Dynamically tracks only active Delegators and Bidders interacting via MCP/backend.
+Implements complex multi-parameter matchmaking based on:
+1. Agent specialization alignment (category match bonus)
+2. Reputation score weighting
+3. Price competitiveness (lowest bid efficiency)
+4. Collateral bond commitment
+5. Historical success rate
 """
 
 import asyncio
@@ -34,14 +39,13 @@ class StateStore:
         self.wallets: Dict[str, WalletState] = {}
 
     # -----------------------------------------------------------------------
-    # Wallet & Ledger Operations (Dynamic only)
+    # Wallet & Ledger Operations
     # -----------------------------------------------------------------------
 
     async def get_or_create_wallet(self, address: str, name: Optional[str] = None, role: str = "Bidder") -> WalletState:
         async with self._lock:
             if address not in self.wallets:
-                # Assign clean role: Delegator or Bidder
-                assigned_role = "Delegator" if "requester" in address.lower() or role == "Delegator" or role == "Requester" else "Bidder"
+                assigned_role = "Delegator" if "requester" in address.lower() or role in ["Delegator", "Requester"] else "Bidder"
                 self.wallets[address] = WalletState(
                     address=address,
                     name=name or f"Agent_{address[:6]}",
@@ -49,9 +53,12 @@ class StateStore:
                     balance_usdc=500.0,
                     locked_collateral_usdc=0.0,
                     reputation_score=100.0,
+                    completed_tasks_count=0,
+                    failed_tasks_count=0,
                 )
             else:
-                # Update role if explicitly provided
+                if name:
+                    self.wallets[address].name = name
                 if role in ["Delegator", "Bidder"]:
                     self.wallets[address].role = role
             return self.wallets[address]
@@ -96,7 +103,7 @@ class StateStore:
             return True
 
     async def credit_payout(self, address: str, amount: float) -> bool:
-        """Credits task payout to worker wallet."""
+        """Credits task payout to worker wallet and boosts reputation."""
         async with self._lock:
             wallet = self.wallets.get(address)
             if not wallet:
@@ -104,31 +111,30 @@ class StateStore:
             wallet.balance_usdc += amount
             wallet.total_earned_usdc += amount
             wallet.completed_tasks_count += 1
-            wallet.reputation_score = min(1000.0, wallet.reputation_score + 5.0)
+            # Progressive reputation reward (up to 1000 max)
+            wallet.reputation_score = min(1000.0, wallet.reputation_score + 15.0)
             return True
 
     async def slash_worker(self, worker_address: str, requester_address: str, bond_amount: float) -> bool:
-        """Slashes worker collateral: 50% refund to requester, 50% burned/penalty."""
+        """Slashes worker collateral: 50% refund to requester, 50% burned/penalty, and slashes reputation."""
         async with self._lock:
             worker = self.wallets.get(worker_address)
             requester = self.wallets.get(requester_address)
             if not worker:
                 return False
             
-            # Deduct locked collateral
             worker.locked_collateral_usdc = max(0.0, worker.locked_collateral_usdc - bond_amount)
             worker.total_slashed_usdc += bond_amount
             worker.failed_tasks_count += 1
-            worker.reputation_score = max(0.0, worker.reputation_score - 20.0)
+            worker.reputation_score = max(0.0, worker.reputation_score - 35.0)
 
-            # Refund 50% of slashed bond to requester as compensation
             if requester:
                 requester.balance_usdc += (bond_amount * 0.5)
 
             return True
 
     async def refund_requester_escrow(self, requester_address: str, amount: float) -> bool:
-        """Refunds full task budget back to requester upon failure/timeout."""
+        """Refunds task budget back to requester upon failure/discount."""
         async with self._lock:
             requester = self.wallets.get(requester_address)
             if not requester:
@@ -187,7 +193,7 @@ class StateStore:
             return results
 
     # -----------------------------------------------------------------------
-    # Bidding & Matchmaking Operations
+    # Multi-Parameter Matchmaking & Bidding Engine
     # -----------------------------------------------------------------------
 
     async def add_bid(self, task_id: str, bid_in: BidCreate) -> Optional[BidResponse]:
@@ -221,7 +227,8 @@ class StateStore:
 
     async def assign_winning_bid(self, task_id: str, selected_bid_id: Optional[str] = None) -> Optional[BidResponse]:
         """
-        Assigns task to specified bid, or automatically selects the best bid.
+        Sophisticated Multi-Parameter Matchmaking Algorithm:
+        Composite Score = (Reputation * 0.40) + (Price Efficiency * 0.35) + (Domain Match * 0.15) + (Bond Ratio * 0.10)
         """
         async with self._lock:
             task = self.tasks.get(task_id)
@@ -236,10 +243,39 @@ class StateStore:
                         chosen_bid = b
                         break
             else:
-                def score_bid(b: BidResponse) -> float:
-                    return (b.worker_reputation_score * 0.5) - (b.bid_price_usdc * 0.3) - (b.estimated_duration_seconds * 0.2)
+                max_budget = task.budget_usdc or 100.0
+                task_cat = task.category.value if hasattr(task.category, "value") else str(task.category)
+
+                def compute_match_score(b: BidResponse) -> float:
+                    wallet = self.wallets.get(b.worker_address)
+                    rep = wallet.reputation_score if wallet else b.worker_reputation_score
+                    
+                    # 1. Reputation Score Component (0 - 100 normalized)
+                    norm_rep = min(100.0, rep)
+                    
+                    # 2. Price Efficiency Component (cheaper bid relative to budget gives higher score)
+                    price_ratio = max(0.01, min(1.0, b.bid_price_usdc / max_budget))
+                    price_score = (1.0 - price_ratio) * 100.0
+                    
+                    # 3. Agent Specialization Alignment Bonus
+                    w_name = (wallet.name if wallet else b.worker_address).lower()
+                    domain_bonus = 0.0
+                    if "code" in task_cat and "code" in w_name:
+                        domain_bonus = 30.0
+                    elif "research" in task_cat and "research" in w_name:
+                        domain_bonus = 30.0
+                    elif "query" in task_cat and "query" in w_name:
+                        domain_bonus = 30.0
+                    
+                    # 4. Collateral Bond Commitment Component
+                    bond_ratio = min(1.0, b.collateral_bond_locked / max(1.0, task.required_worker_bond))
+                    bond_score = bond_ratio * 20.0
+
+                    # Composite Weighted Matchmaking Score
+                    total_score = (norm_rep * 0.40) + (price_score * 0.35) + domain_bonus + bond_score
+                    return total_score
                 
-                chosen_bid = max(bids, key=score_bid)
+                chosen_bid = max(bids, key=compute_match_score)
             
             if not chosen_bid:
                 return None

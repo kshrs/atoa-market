@@ -22,28 +22,36 @@ function getAgentColor(nameOrId = '') {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
-// Maps addresses & raw names directly to agent filenames: code_agent.py, research_agent.py, query_agent.py
+// Formats agent names precisely based on address and explicit names
 function formatAgentName(rawName = '', address = '') {
+  if (rawName && !rawName.startsWith('Agent_0x')) return rawName;
   const identifier = (rawName || address || '').toLowerCase();
-  if (identifier.includes('code') || identifier.includes('optimizer')) return 'Code Agent';
-  if (identifier.includes('research') || identifier.includes('researcher')) return 'Research Agent';
+  if (identifier.includes('code_optimizer_1') || identifier.includes('alpha-code')) return 'Code Agent (Alpha)';
+  if (identifier.includes('code_optimizer_2') || identifier.includes('beta-code')) return 'Code Agent (Beta)';
+  if (identifier.includes('code')) return 'Code Agent';
+  if (identifier.includes('researcher_node_1') || identifier.includes('alpha-research')) return 'Research Agent (Alpha)';
+  if (identifier.includes('researcher_node_2') || identifier.includes('beta-research')) return 'Research Agent (Beta)';
+  if (identifier.includes('research')) return 'Research Agent';
   if (identifier.includes('query') || identifier.includes('oracle')) return 'Query Agent';
   if (identifier.includes('requester') || identifier.includes('daemon')) return 'Delegator Daemon';
-  if (rawName && !rawName.startsWith('Agent_0x')) return rawName;
   return 'Delegator Agent';
 }
 
 function getShortLabel(nameOrAddress = '') {
   const formatted = formatAgentName(nameOrAddress, nameOrAddress);
-  if (formatted === 'Code Agent') return 'CODE';
-  if (formatted === 'Research Agent') return 'RSCH';
-  if (formatted === 'Query Agent') return 'QRY';
+  if (formatted.includes('Code') && formatted.includes('Alpha')) return 'CD-α';
+  if (formatted.includes('Code') && formatted.includes('Beta')) return 'CD-β';
+  if (formatted.includes('Code')) return 'CODE';
+  if (formatted.includes('Research') && formatted.includes('Alpha')) return 'RS-α';
+  if (formatted.includes('Research') && formatted.includes('Beta')) return 'RS-β';
+  if (formatted.includes('Research')) return 'RSCH';
+  if (formatted.includes('Query')) return 'QRY';
   if (formatted.includes('Delegator')) return 'REQ';
   return (nameOrAddress.slice(0, 4) || 'AG').toUpperCase();
 }
 
 // ----------------------------------------------------------------------
-// 1. ACTIVE AGENTS PANEL (LEFT ZONE - Clean Delegators & Bidders)
+// 1. ACTIVE AGENTS PANEL (LEFT ZONE - Clean Delegators & Bidders with Reputation)
 // ----------------------------------------------------------------------
 export function ActiveAgentsPanel({ agents }) {
   return (
@@ -76,17 +84,17 @@ export function ActiveAgentsPanel({ agents }) {
       <div className="flex-1 overflow-y-auto pt-4 space-y-3 pr-1">
         {agents.length === 0 ? (
           <div className="h-full flex items-center justify-center font-mono text-xs text-slate-400 text-center p-4">
-            No agents active yet. Run `python agents_demo/run_all_workers.py` or post a task from agy-cli...
+            No agents active yet. Launch `python agents_demo/run_all_workers.py` or post a task from agy-cli...
           </div>
         ) : (
           <AnimatePresence>
             {agents.map((agent) => {
               const displayName = formatAgentName(agent.name, agent.address);
-              // Only Delegator Daemon / Requester is Delegator; Worker nodes (Code, Research, Query) are strictly Bidders
               const isDelegator = displayName.includes('Delegator') || agent.role === 'Delegator' || agent.role === 'Requester';
               const roleTitle = isDelegator ? 'Delegator' : 'Bidder';
               const color = getAgentColor(displayName);
               const shortLabel = getShortLabel(displayName);
+              const repScore = agent.reputation_score != null ? Math.round(agent.reputation_score) : 100;
 
               return (
                 <motion.div
@@ -96,7 +104,7 @@ export function ActiveAgentsPanel({ agents }) {
                   exit={{ opacity: 0, scale: 0.95 }}
                   className="flex items-center justify-between p-3.5 rounded-2xl bg-white border-2 border-slate-900 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)]"
                 >
-                  {/* Avatar + Name */}
+                  {/* Avatar + Name + Reputation Pill */}
                   <div className="flex items-center gap-3 min-w-0">
                     <div
                       className={`w-10 h-10 rounded-full border-2 border-slate-900 flex items-center justify-center font-mono font-bold text-xs ${color.bg} ${color.text}`}
@@ -104,10 +112,16 @@ export function ActiveAgentsPanel({ agents }) {
                       {shortLabel}
                     </div>
                     <div className="min-w-0">
-                      <div className="text-sm font-bold text-slate-900 font-mono truncate">
-                        {displayName}
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-slate-900 font-mono truncate">
+                          {displayName}
+                        </span>
+                        {/* Live Reputation Badge */}
+                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-800 border border-indigo-200">
+                          ★ {repScore}
+                        </span>
                       </div>
-                      <div className="text-xs text-slate-500 font-mono">
+                      <div className="text-xs text-slate-500 font-mono mt-0.5">
                         <span className={`font-semibold ${isDelegator ? 'text-amber-700' : 'text-rose-700'}`}>
                           {roleTitle}
                         </span> • {agent.balance_usdc != null ? `${agent.balance_usdc.toFixed(2)} USDC` : ''}
@@ -137,7 +151,7 @@ export function ActiveAgentsPanel({ agents }) {
 }
 
 // ----------------------------------------------------------------------
-// 2. BIDDING PLACE BOARD (TOP RIGHT ZONE - Real-time Multi-Round Bidding)
+// 2. BIDDING PLACE BOARD (TOP RIGHT ZONE - Multi-Parameter Competitive Bidding)
 // ----------------------------------------------------------------------
 export function BiddingPlaceBoard({ openTasks }) {
   return (
@@ -225,7 +239,7 @@ export function BiddingPlaceBoard({ openTasks }) {
                     </div>
                   </div>
 
-                  {/* Column 4: Bids Stream (4 Cols) */}
+                  {/* Column 4: Bids Stream with Reputation Stars (4 Cols) */}
                   <div className="col-span-12 sm:col-span-4 flex items-center gap-2 overflow-x-auto py-1 pl-2 border-t sm:border-t-0 border-slate-200">
                     {bidsList.length > 0 ? (
                       bidsList.map((bid, bIdx) => {
@@ -234,11 +248,13 @@ export function BiddingPlaceBoard({ openTasks }) {
                         const bShort = getShortLabel(bName);
                         const bColor = getAgentColor(bName);
                         const bPrice = bid.bid_price_usdc != null ? bid.bid_price_usdc : bid.price;
+                        const bRep = bid.worker_reputation_score ? Math.round(bid.worker_reputation_score) : 100;
+
                         return (
                           <div
                             key={bIdx}
                             className="flex flex-col items-center flex-shrink-0"
-                            title={`${bName}: $${bPrice} USDC`}
+                            title={`${bName} (★${bRep}): $${bPrice} USDC`}
                           >
                             <div
                               className={`w-8 h-8 rounded-full border-2 border-slate-900 flex items-center justify-center font-mono text-[10px] font-bold ${bColor.bg} ${bColor.text}`}
@@ -302,9 +318,7 @@ export function CompletedWorksBoard({ completedTasks }) {
             const winnerShort = getShortLabel(winnerName);
             const winnerColor = getAgentColor(winnerName);
 
-            // Notify work done by AGENT TYPE (e.g. "Code Agent Task", "Research Agent Synthesis", "Query Agent Fact Check")
             const agentWorkTypeLabel = `${winnerName} Work`;
-
             const payment =
               task.budget_usdc != null ? `${task.budget_usdc.toFixed(2)} USDC` : (task.payment || '$35.00 USDC');
 
@@ -325,7 +339,6 @@ export function CompletedWorksBoard({ completedTasks }) {
                       <span className="text-xs font-bold font-mono text-slate-900 truncate">
                         {task.title}
                       </span>
-                      {/* Work Done Tagged by Agent Type */}
                       <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-300">
                         {agentWorkTypeLabel}
                       </span>
