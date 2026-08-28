@@ -442,6 +442,9 @@ export default function App() {
       },
       (status) => {
         setIsLiveConnected(status);
+        if (status) {
+          syncWithBackend();
+        }
       }
     );
 

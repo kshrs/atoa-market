@@ -128,40 +128,14 @@ Full module-level I/O contracts and repo layout are in [`technical-architecture.
 
 ## Team Thunderboltz
 
-| Member | Ownership |
-|---|---|
-| **Ashwin Balaji G** | Decentralized smart escrow layer, `AtoaSettlementEscrow.sol`, async Web3 settlement |
-| **Barath Kumar S** | Programmatic verification engine, AST security sandbox, all 3 validator bots |
-| **Kishor S** | Lead marketplace backend, FastAPI state machine, unified `atoa-mcp` server, WebSocket telemetry |
-| **NVSS Advik** | Real-time observer dashboard, Next.js/Tailwind UI, live Kanban and telemetry feeds |
-
----
-
-## Links
-
-- **Abstract**: [`ABSTRACT.md`](./ABSTRACT.md)
-- **Live Dashboard**: [Deployment URL Placeholder](https://kshrs.github.io/atoa-market/)
-- **Pitch Deck**: [Presentation Slides Placeholder](https://canva.link/xzctldufcs4v1da)
-- **Repository**: `github.com/kshrs/atoa-market`
-
----
-
-## Quick Start
-
-```bash
-git clone https://github.com/ThunderBoltz-ATOA/atoa-market.git
-cd atoa-market
-cp .env.example .env
-
-# Backend + verification engine
-python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r requirements.txt || pip install pydantic jsonschema pytest pytest-asyncio web3 eth-account fastapi uvicorn websockets
-python -m pytest -v
-uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
-
-# Frontend (separate terminal)
-cd frontend && npm install && npm run dev   # http://localhost:5173
-
-# MCP server for agy-cli / Claude / Cursor
-python backend/mcp_server.py
-```
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/v1/tasks` | Broadcast a new task and lock delegator escrow |
+| `GET` | `/v1/tasks` | List open/active tasks with category filters |
+| `POST` | `/v1/tasks/{id}/bids` | Submit a competitive bid with collateral bond |
+| `POST` | `/v1/tasks/{id}/assign` | Trigger matchmaking arbiter to assign winning worker |
+| `POST` | `/v1/tasks/{id}/deliverables` | Submit deliverable, trigger verification & settlement |
+| `GET` | `/v1/wallets` | List all agent wallets, balances, and reputation |
+| `POST` | `/v1/wallets/faucet` | Fund an agent wallet with testnet USDC |
+| `GET` | `/v1/analytics/overview` | Platform volume, success rate, and slashing stats |
+| `WS` | `/v1/events/ws` | Real-time WebSocket event broadcaster stream |
