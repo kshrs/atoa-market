@@ -10,6 +10,7 @@ import {
   placeLowerBidOnTask,
   resolveTask
 } from './mockData';
+import { fetchAnalytics, fetchTasks, fetchWallets, subscribeToLiveEvents } from './api';
 
 // ----------------------------------------------------------------------
 // HELPER UTILITIES: AVATAR PALETTES
@@ -38,7 +39,7 @@ function getAgentPalette(id = '') {
 // ----------------------------------------------------------------------
 export function AgentChip({ agent }) {
   const isDelegating = agent.status === 'delegating';
-  const palette = getAgentPalette(agent.id);
+  const palette = getAgentPalette(agent.id || agent.address || '');
 
   return (
     <motion.div
@@ -53,20 +54,20 @@ export function AgentChip({ agent }) {
         <div
           className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-semibold text-xs border ${palette.bg} ${palette.text} ${palette.border}`}
         >
-          {agent.id}
+          {(agent.id || agent.name || 'AG').slice(0, 4)}
         </div>
 
         <div className="min-w-0">
           <div className="text-xs font-semibold text-slate-800 truncate">
-            {agent.name}
+            {agent.name || agent.address}
           </div>
           <div className="text-[11px] text-slate-400 truncate">
-            {agent.spec || 'Node'}
+            {agent.role || agent.spec || 'Agent Node'} • {agent.balance_usdc != null ? `${agent.balance_usdc} USDC` : ''}
           </div>
         </div>
       </div>
 
-      {/* Soft Status Pill (No glowing dot) */}
+      {/* Soft Status Pill */}
       <div className="flex-shrink-0">
         {isDelegating ? (
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-800 border border-amber-200/80">
@@ -74,7 +75,7 @@ export function AgentChip({ agent }) {
           </span>
         ) : (
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
-            Working
+            {agent.role === 'Rogue' ? 'Rogue Bot' : 'Working'}
           </span>
         )}
       </div>
@@ -83,9 +84,6 @@ export function AgentChip({ agent }) {
 }
 
 export function AgentPanel({ agents, onSpawn, onRetire }) {
-  const delegatingCount = agents.filter((a) => a.status === 'delegating').length;
-  const workingCount = agents.filter((a) => a.status === 'working').length;
-
   return (
     <aside className="h-full flex flex-col bg-white border-r border-slate-200 select-none">
       {/* Panel Header */}
@@ -118,20 +116,13 @@ export function AgentPanel({ agents, onSpawn, onRetire }) {
             </button>
           </div>
         </div>
-
-        {/* Quiet Subtitle */}
-        <div className="flex items-center gap-2 mt-2 text-xs text-slate-500">
-          <span>{delegatingCount} delegating</span>
-          <span>·</span>
-          <span>{workingCount} working</span>
-        </div>
       </div>
 
-      {/* Agent Cards Dynamic List */}
-      <div className="flex-1 p-3 overflow-y-auto space-y-2">
-        <AnimatePresence mode="popLayout" initial={false}>
+      {/* Agents Scrollable List */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        <AnimatePresence>
           {agents.map((agent) => (
-            <AgentChip key={agent.id} agent={agent} />
+            <AgentChip key={agent.id || agent.address} agent={agent} />
           ))}
         </AnimatePresence>
       </div>
@@ -140,300 +131,217 @@ export function AgentPanel({ agents, onSpawn, onRetire }) {
 }
 
 // ----------------------------------------------------------------------
-// 2. BIDDING PLACE (TOP RIGHT ZONE) & BID CHIP
+// 2. BIDDING BOARD (TOP 55%)
 // ----------------------------------------------------------------------
-export function BidderChip({ bid, isWinner }) {
-  const palette = getAgentPalette(bid.bidderId);
-
-  return (
-    <div
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-colors flex-shrink-0 ${
-        isWinner
-          ? 'bg-emerald-50 border border-emerald-300 text-emerald-900 font-medium shadow-xs'
-          : 'bg-slate-50 border border-slate-200 text-slate-700'
-      }`}
-    >
-      {/* Micro Avatar */}
-      <span
-        className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-semibold ${palette.bg} ${palette.text}`}
-      >
-        {bid.bidderId.replace('AG-', '')}
-      </span>
-
-      {/* Price */}
-      <span>{bid.price.toFixed(2)} ETH</span>
-
-      {/* Winner Label */}
-      {isWinner && (
-        <span className="text-[10px] text-emerald-700 font-semibold uppercase tracking-wider pl-0.5">
-          Low
-        </span>
-      )}
-    </div>
-  );
-}
-
-export function TaskRow({ task }) {
-  const sortedBids = [...task.bids].sort((a, b) => a.price - b.price);
-  const lowestPrice = sortedBids.length > 0 ? sortedBids[0].price : null;
-  const delegatorPalette = getAgentPalette(task.assignee?.id || 'AG-1');
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.2, ease: 'easeOut' }}
-      className="p-3.5 rounded-lg bg-white border border-slate-200 hover:border-slate-300 transition-colors"
-    >
-      <div className="grid grid-cols-12 gap-4 items-center">
-        {/* Assignee / Delegator (3 cols) */}
-        <div className="col-span-12 sm:col-span-4 lg:col-span-3 flex items-center gap-2.5 min-w-0">
-          <div
-            className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-semibold text-xs border ${delegatorPalette.bg} ${delegatorPalette.text} ${delegatorPalette.border}`}
-          >
-            {task.assignee?.id || 'AG'}
-          </div>
-          <div className="min-w-0">
-            <div className="text-xs font-semibold text-slate-800 truncate">
-              {task.assignee?.name || 'Delegator'}
-            </div>
-            <div className="text-[11px] text-slate-400">
-              Delegator
-            </div>
-          </div>
-        </div>
-
-        {/* Task Title + Description (4 cols) */}
-        <div className="col-span-12 sm:col-span-8 lg:col-span-4 min-w-0">
-          <div className="text-xs font-semibold text-slate-900 truncate">
-            {task.title}
-          </div>
-          <div className="text-[11px] text-slate-500 truncate mt-0.5">
-            {task.description}
-          </div>
-          <div className="text-[11px] text-slate-400 mt-1">
-            Max budget: {task.maxBudget.toFixed(2)} ETH · {task.bids.length} bids
-          </div>
-        </div>
-
-        {/* Bids List - Plain horizontal rounded chips sorted low-to-high (5 cols) */}
-        <div className="col-span-12 lg:col-span-5 min-w-0">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {sortedBids.map((bid) => (
-              <BidderChip
-                key={bid.bidderId}
-                bid={bid}
-                isWinner={bid.price === lowestPrice}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
 export function BiddingBoard({ openTasks, onNewTask, onLowerBid, onResolve }) {
   return (
-    <section className="h-full flex flex-col bg-slate-50/50 border-b border-slate-200 overflow-hidden select-none">
+    <section className="h-full flex flex-col bg-white border-b border-slate-200 select-none">
       {/* Header */}
-      <div className="px-5 py-3 border-b border-slate-200 bg-white flex items-center justify-between flex-shrink-0">
+      <div className="p-4 border-b border-slate-200 flex-shrink-0 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-slate-900">
-            Bidding Place
+            Open Task Auctions & Bidding
           </h2>
           <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
-            {openTasks.length} open
+            {openTasks.length} active
           </span>
         </div>
 
-        {/* Action Controls */}
         <div className="flex items-center gap-2">
           <button
             onClick={onNewTask}
-            className="px-2.5 py-1 rounded bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium transition-colors"
+            className="text-xs font-medium px-2.5 py-1 rounded bg-slate-900 text-white hover:bg-slate-800 transition-colors"
           >
             + Post Task
           </button>
           <button
             onClick={onLowerBid}
             disabled={openTasks.length === 0}
-            className="px-2.5 py-1 rounded bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="text-xs font-medium px-2.5 py-1 rounded bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Lower Bid
+            ↓ Simulate Bid
           </button>
           <button
             onClick={onResolve}
             disabled={openTasks.length === 0}
-            className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="text-xs font-medium px-2.5 py-1 rounded bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Settle Task
+            ✓ Verify & Settle
           </button>
         </div>
       </div>
 
-      {/* Task Rows List */}
-      <div className="flex-1 p-4 overflow-y-auto space-y-2.5">
-        <AnimatePresence mode="popLayout" initial={false}>
-          {openTasks.length === 0 ? (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="h-36 flex flex-col items-center justify-center text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-lg bg-white"
+      {/* Task Cards Grid / List */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {openTasks.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-xs text-slate-400">
+            No open auctions. Awaiting new tasks from agy-cli agents or simulator...
+          </div>
+        ) : (
+          openTasks.map((task) => (
+            <div
+              key={task.id || task.task_id}
+              className="p-3.5 rounded-lg bg-slate-50/70 border border-slate-200 flex flex-col gap-2.5"
             >
-              <span>No open tasks in auction queue.</span>
-              <button
-                onClick={onNewTask}
-                className="mt-2 text-xs font-medium text-slate-700 hover:text-slate-900 underline"
-              >
-                Post a new task
-              </button>
-            </motion.div>
-          ) : (
-            openTasks.map((task) => (
-              <TaskRow key={task.id} task={task} />
-            ))
-          )}
-        </AnimatePresence>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-900">
+                    {task.title}
+                  </span>
+                  <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
+                    {task.category || 'TASK'}
+                  </span>
+                </div>
+                <div className="text-xs font-mono font-semibold text-slate-900">
+                  {task.budget_usdc != null ? `${task.budget_usdc} USDC` : `${task.maxBudget || 0} ${task.unit || 'USDC'}`}
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-500 line-clamp-2">
+                {task.description}
+              </p>
+
+              {/* Bids List */}
+              {task.bids && task.bids.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-200/60">
+                  <span className="text-[11px] text-slate-400 self-center mr-1">Bids:</span>
+                  {task.bids.map((b, idx) => (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-700 font-mono"
+                    >
+                      <span>{b.agentName || b.worker_address || b.bidderId}</span>
+                      <strong className="text-slate-900">${b.price || b.bid_price_usdc}</strong>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))
+        )}
       </div>
     </section>
   );
 }
 
 // ----------------------------------------------------------------------
-// 3. COMPLETED WORKS (BOTTOM RIGHT ZONE)
+// 3. COMPLETED BOARD (BOTTOM 45%)
 // ----------------------------------------------------------------------
 export function CompletedBoard({ completedTasks }) {
   return (
-    <section className="h-full flex flex-col bg-slate-50/50 overflow-hidden select-none">
+    <section className="h-full flex flex-col bg-white select-none">
       {/* Header */}
-      <div className="px-5 py-3 border-b border-slate-200 bg-white flex items-center justify-between flex-shrink-0">
+      <div className="p-4 border-b border-slate-200 flex-shrink-0 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-slate-900">
-            Completed Works
+            Settled & Slashed Tasks (Ledger)
           </h2>
           <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
             {completedTasks.length} settled
           </span>
         </div>
-
-        <span className="text-xs text-slate-400">
-          Autonomous verification & settlement
-        </span>
       </div>
 
-      {/* Completed Tasks List */}
-      <div className="flex-1 p-4 overflow-y-auto space-y-2.5">
-        <AnimatePresence mode="popLayout" initial={false}>
-          {completedTasks.map((task) => {
-            const delegatorPalette = getAgentPalette(task.assignee?.id || 'AG-1');
-            const winnerPalette = getAgentPalette(task.winner?.id || 'AG-2');
-
+      {/* Completed List */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        {completedTasks.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-xs text-slate-400">
+            No completed tasks yet. Completed transactions will appear here.
+          </div>
+        ) : (
+          completedTasks.map((t, idx) => {
+            const isSlashed = t.status === 'Failed' || t.status === 'SLASHED';
             return (
-              <motion.div
-                key={task.id}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2, ease: 'easeOut' }}
-                className="p-3.5 rounded-lg bg-white border border-slate-200 hover:border-slate-300 transition-colors"
+              <div
+                key={t.id || t.task_id || idx}
+                className="p-3 rounded-lg bg-slate-50/50 border border-slate-200 flex items-center justify-between gap-4"
               >
-                <div className="grid grid-cols-12 gap-4 items-center">
-                  {/* Assignee / Delegator (3 cols) */}
-                  <div className="col-span-12 sm:col-span-4 lg:col-span-3 flex items-center gap-2.5 min-w-0">
-                    <div
-                      className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-semibold text-xs border ${delegatorPalette.bg} ${delegatorPalette.text} ${delegatorPalette.border}`}
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-slate-800 truncate">
+                      {t.title}
+                    </span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${
+                        isSlashed
+                          ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                          : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      }`}
                     >
-                      {task.assignee?.id || 'AG'}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-slate-800 truncate">
-                        {task.assignee?.name || 'Delegator'}
-                      </div>
-                      <div className="text-[11px] text-slate-400">
-                        Delegator
-                      </div>
-                    </div>
+                      {isSlashed ? 'Slashed' : 'Verified'}
+                    </span>
                   </div>
-
-                  {/* Task Details (4 cols) */}
-                  <div className="col-span-12 sm:col-span-8 lg:col-span-4 min-w-0">
-                    <div className="text-xs font-semibold text-slate-900 truncate">
-                      {task.title}
-                    </div>
-                    <div className="text-[11px] text-slate-500 truncate mt-0.5">
-                      {task.description}
-                    </div>
-                    <div className="text-[11px] text-slate-400 mt-1">
-                      Settled at {task.settledAt}
-                    </div>
-                  </div>
-
-                  {/* Winner + 3 Status Pills (5 cols) */}
-                  <div className="col-span-12 lg:col-span-5 flex items-center justify-between gap-3 min-w-0">
-                    {/* Winner Agent Pill */}
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span
-                        className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold ${winnerPalette.bg} ${winnerPalette.text} border ${winnerPalette.border} flex-shrink-0`}
-                      >
-                        {task.winner?.id?.replace('AG-', '') || 'W'}
-                      </span>
-                      <span className="text-xs font-medium text-slate-700 truncate">
-                        {task.winner?.name || 'Worker'}
-                      </span>
-                    </div>
-
-                    {/* Three Small Status Pills: Verified/Pending, Done/Failed, Payout */}
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                      {/* 1. Verification Pill */}
-                      {task.verification === 'Verified' ? (
-                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200/80">
-                          Verified
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-800 border border-amber-200/80">
-                          Pending
-                        </span>
-                      )}
-
-                      {/* 2. Done / Failed Pill */}
-                      {task.status === 'Done' ? (
-                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
-                          Done
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80">
-                          Failed
-                        </span>
-                      )}
-
-                      {/* 3. Payout Amount Pill */}
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-50 text-slate-800 border border-slate-200">
-                        {task.payment}
-                      </span>
-                    </div>
+                  <div className="text-[11px] text-slate-400 truncate mt-0.5">
+                    Winner: {t.winner?.name || t.assigned_worker || 'Unknown'} • {t.settledAt || 'Just now'}
                   </div>
                 </div>
-              </motion.div>
+
+                <div className="text-xs font-mono font-semibold text-slate-800 flex-shrink-0">
+                  {t.payment || (t.budget_usdc ? `${t.budget_usdc} USDC` : '')}
+                </div>
+              </div>
             );
-          })}
-        </AnimatePresence>
+          })
+        )}
       </div>
     </section>
   );
 }
 
 // ----------------------------------------------------------------------
-// MAIN APP COMPONENT & SIMULATION ENGINE
+// MAIN APP COMPONENT (HYBRID: LIVE BACKEND + SIMULATOR FALLBACK)
 // ----------------------------------------------------------------------
 export default function App() {
   const [agents, setAgents] = useState(INITIAL_AGENTS);
   const [openTasks, setOpenTasks] = useState(INITIAL_OPEN_TASKS);
   const [completedTasks, setCompletedTasks] = useState(INITIAL_COMPLETED_TASKS);
-
-  // Minimal simulator state
+  const [isLiveConnected, setIsLiveConnected] = useState(false);
   const [isAutoSimulating, setIsAutoSimulating] = useState(true);
+
+  // 1. Initial REST Sync with FastAPI backend
+  const syncWithBackend = useCallback(async () => {
+    const liveWallets = await fetchWallets();
+    if (liveWallets && liveWallets.length > 0) {
+      setAgents(liveWallets);
+    }
+
+    const liveTasks = await fetchTasks();
+    if (liveTasks && liveTasks.length > 0) {
+      const open = liveTasks.filter((t) => t.status !== 'SETTLED' && t.status !== 'SLASHED');
+      const closed = liveTasks.filter((t) => t.status === 'SETTLED' || t.status === 'SLASHED');
+      if (open.length > 0) setOpenTasks(open);
+      if (closed.length > 0) setCompletedTasks(closed);
+    }
+  }, []);
+
+  useEffect(() => {
+    syncWithBackend();
+  }, [syncWithBackend]);
+
+  // 2. Real-Time WebSocket Telemetry
+  useEffect(() => {
+    const unsubscribe = subscribeToLiveEvents(
+      (event) => {
+        console.log('[ATOA Live Event]', event);
+        if (event.event_type === 'TASK_CREATED') {
+          setOpenTasks((prev) => [event.data, ...prev]);
+        } else if (event.event_type === 'PAYOUT_SETTLED' || event.event_type === 'WORKER_SLASHED') {
+          syncWithBackend();
+        } else if (event.event_type === 'WALLET_UPDATED') {
+          syncWithBackend();
+        }
+      },
+      (status) => {
+        setIsLiveConnected(status);
+        if (status) {
+          // If live backend connected, turn off local random simulator to avoid collisions
+          setIsAutoSimulating(false);
+        }
+      }
+    );
+
+    return unsubscribe;
+  }, [syncWithBackend]);
 
   // Action Handlers
   const handleSpawn = useCallback(() => {
@@ -460,7 +368,7 @@ export default function App() {
     });
   }, [completedTasks]);
 
-  // Automated Swarm Simulator Loop (Calm 3-second interval)
+  // Simulator fallback loop
   useEffect(() => {
     if (!isAutoSimulating) return;
 
@@ -507,10 +415,10 @@ export default function App() {
           </div>
           <div>
             <h1 className="text-sm font-semibold text-slate-900 leading-tight">
-              Agent Marketplace
+              ATOA Protocol Dashboard
             </h1>
             <p className="text-[11px] text-slate-400 leading-tight">
-              Live Autonomous Coordination View
+              Live Autonomous Coordination & Settlement View
             </p>
           </div>
         </div>
@@ -530,8 +438,17 @@ export default function App() {
           </span>
         </div>
 
-        {/* Single Minimal Toggle */}
+        {/* Live Backend Connection Indicator & Toggle */}
         <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isLiveConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'
+              }`}
+            />
+            <span>{isLiveConnected ? 'Live Backend Connected' : 'Local Standalone'}</span>
+          </div>
+
           <button
             onClick={() => setIsAutoSimulating(!isAutoSimulating)}
             className="px-3 py-1.5 rounded-md text-xs font-medium bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 transition-colors flex items-center gap-2 shadow-xs"
@@ -580,5 +497,3 @@ export default function App() {
     </div>
   );
 }
-
-
