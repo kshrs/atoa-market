@@ -394,3 +394,62 @@ def test_cli_execution(tmp_path):
     assert result_json["verdict"] == "PASS"
     assert result_json["score"] == 1.0
 
+
+# =========================================================================
+# 5. PLAN 002: PROCESS GROUP CLEANUP & LIVE QUERY SEARCH TESTS
+# =========================================================================
+
+@pytest.mark.asyncio
+async def test_process_tree_cleanup_on_timeout():
+    """Verify that process tree termination terminates lingering subprocesses cleanly."""
+    task = TaskManifest(
+        task_id="task_proc_tree_01",
+        task_type="coding",
+        prompt="Process tree timeout test",
+        constraints={"timeout_sec": 1.0, "allow_subprocess": True}
+    )
+    deliverable = DeliverablePayload(
+        task_id="task_proc_tree_01",
+        submitted_code="""
+import time
+import sys
+# Spawn or run long loop
+while True:
+    time.sleep(0.05)
+"""
+    )
+    result = await evaluate_task(task, deliverable)
+    assert result.verdict == "FAIL"
+    assert result.benchmark_metrics["timed_out"] is True
+    assert result.slashing_recommended is True
+
+
+@pytest.mark.asyncio
+async def test_query_validator_live_search_enrichment(monkeypatch):
+    """Verify that QueryValidatorBot enriches ground truth when live search is enabled."""
+    from engine.verifiers.query_matcher import resolve_query_ground_truth
+
+    # Mock the web search resolver to return deterministic ground truth entities for test
+    def mock_fetch(query: str):
+        return ["Solana", "Proof of History", "65000 TPS", "Anatoly Yakovenko"]
+
+    monkeypatch.setattr("engine.verifiers.query_matcher.resolve_query_ground_truth", mock_fetch)
+
+    task_id = "task_live_query_01"
+    category = "query"
+    artifact_payload = {
+        "submitted_text": "Solana achieves up to 65000 TPS using Proof of History designed by Anatoly Yakovenko."
+    }
+    validation_spec = {
+        "prompt": "What is Solana throughput and consensus mechanism?",
+        "enable_live_search": True,
+        "required_keywords": ["Solana"]
+    }
+
+    report = await verify_deliverable(task_id, category, artifact_payload, validation_spec)
+    assert report.passed is True
+    assert report.score >= 0.85
+    assert report.validation_details["live_search_enabled"] is True
+    assert len(report.validation_details["ground_truth_entities"]) >= 4
+
+

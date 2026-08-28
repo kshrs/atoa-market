@@ -35,8 +35,14 @@ All components strictly implement Developer **`bk`'s role** from `splitup_file.m
   - Replaced manual dictionary checks with full `jsonschema.Draft202012Validator` deep recursive validation.
   - Enforces nested types, min/max length boundaries, required properties, and URI formats.
 
+### Process-Tree Cleanup & Live Query Ground Truth (Plan 002)
+- **Sandbox Process Tree Cleanup (`engine/verifiers/coding.py`)**:
+  - Implemented `_terminate_process_tree(proc)` with cross-platform termination (`taskkill /F /T` on Windows, process group `killpg` on POSIX).
+- **Query Ground-Truth Resolver (`engine/verifiers/query_matcher.py`)**:
+  - Implemented `resolve_query_ground_truth` and `enable_live_search` constraint support for live entity extraction and matching.
+
 ### Test Suite (`tests/test_verifiers.py`)
-- **15/15 automated tests passing (100% pass rate in ~4.9s)**:
+- **17/17 automated tests passing (100% pass rate in ~5.8s)**:
   1. `test_verify_deliverable_code_generation_pass`: Code generation contract test $\to$ `VerificationReport` with `passed=True`.
   2. `test_verify_deliverable_research_jsonschema_pass`: Deep `jsonschema` validation passes for compliant research JSON.
   3. `test_verify_deliverable_research_jsonschema_invalid`: Nested `jsonschema` constraint violation rejected.
@@ -52,6 +58,8 @@ All components strictly implement Developer **`bk`'s role** from `splitup_file.m
   13. `test_researcher_verifier_grounded_report`: Grounding and citation checks.
   14. `test_dispatcher_backend_payload`: Legacy backend payload adapter compatibility.
   15. `test_cli_execution`: End-to-end CLI execution test.
+  16. `test_process_tree_cleanup_on_timeout`: Plan 002 process tree termination test.
+  17. `test_query_validator_live_search_enrichment`: Plan 002 live search ground truth test.
 
 ---
 
@@ -59,6 +67,6 @@ All components strictly implement Developer **`bk`'s role** from `splitup_file.m
 
 | Gate | Status | Description |
 |---|---|---|
-| **Gate 1: Code Review & TDD Hardening** | **PASSED** | Plan 001 and `splitup_file.md` contracts implemented and verified with 15/15 passing tests. |
-| **Gate 2: Manual Human Verification** | **PENDING** | Awaiting explicit human review and approval. |
+| **Gate 1: Code Review & TDD Hardening** | **PASSED** | Plans 001 & 002 and `splitup_file.md` contracts implemented and verified with 17/17 passing tests. |
+| **Gate 2: Manual Human Verification** | **PENDING** | Awaiting final explicit human sign-off. |
 | **Gate 3: Merge to `test` branch** | **BLOCKED** | Awaiting explicit "Approved, merge to test" response from the user. |

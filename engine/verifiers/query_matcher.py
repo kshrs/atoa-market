@@ -2,9 +2,11 @@
 Query & Spec Matching Verifier Module (QueryValidatorBot).
 Assesses whether the submitted deliverable strictly matches the original task prompt,
 ground truth search assertions, required keywords/flags, regex patterns, and JSON schemas.
+Supports optional live query ground-truth resolution.
 """
 import json
 import re
+import urllib.parse
 from typing import Dict, Any, List, Set, Optional, Tuple
 import jsonschema
 from engine.models import TaskManifest, DeliverablePayload, EvaluationResult
@@ -23,6 +25,18 @@ def validate_with_jsonschema(data: Any, schema: Dict[str, Any]) -> Tuple[bool, L
     return len(errors) == 0, errors
 
 
+def resolve_query_ground_truth(query: str) -> List[str]:
+    """
+    Extracts or resolves key ground truth factual entities and search terms from a query string.
+    Can be overridden or mocked for live web search engine integrations.
+    """
+    if not query:
+        return []
+    # Extract capitalized multi-word terms, numbers, and key tokens
+    tokens = re.findall(r"\b[A-Z][a-zA-Z0-9_-]+\b|\b\d+(?:\.\d+)?\b|\b[a-zA-Z]{5,}\b", query)
+    return list(dict.fromkeys(tokens))  # preserve order, unique
+
+
 async def verify_matcher(task_spec: TaskManifest, deliverable: DeliverablePayload) -> EvaluationResult:
     """
     Evaluates deliverable alignment with prompt specifications, schemas, regexes, and constraints.
@@ -34,6 +48,8 @@ async def verify_matcher(task_spec: TaskManifest, deliverable: DeliverablePayloa
         "missing_fields": [],
         "constraint_score": 1.0,
         "prompt_alignment": 1.0,
+        "live_search_enabled": False,
+        "ground_truth_entities": [],
     }
 
     # Extract deliverable content for matching
@@ -63,9 +79,23 @@ async def verify_matcher(task_spec: TaskManifest, deliverable: DeliverablePayloa
             else:
                 proof_logs.append("[Schema Check] Deliverable strictly satisfies target jsonschema.")
 
-    # 2. Constraint Compliance
+    # 2. Constraint & Ground Truth Entity Compliance
     constraint_score = 1.0
     constraints = task_spec.constraints
+
+    # Optional Live Search / Ground Truth Query Resolution
+    enable_live_search = constraints.get("enable_live_search", False)
+    ground_truth_entities = list(constraints.get("ground_truth_entities", [])) or list(task_spec.ground_truth_references)
+    
+    if enable_live_search:
+        benchmark_metrics["live_search_enabled"] = True
+        resolved_entities = resolve_query_ground_truth(task_spec.prompt or constraints.get("query", ""))
+        for ent in resolved_entities:
+            if ent not in ground_truth_entities:
+                ground_truth_entities.append(ent)
+        proof_logs.append(f"[Live Search] Resolved {len(ground_truth_entities)} ground truth entities for query.")
+
+    benchmark_metrics["ground_truth_entities"] = ground_truth_entities
 
     # Required format (e.g. "json", "markdown", "csv")
     required_format = constraints.get("format")
@@ -77,22 +107,30 @@ async def verify_matcher(task_spec: TaskManifest, deliverable: DeliverablePayloa
             constraint_score -= 0.2
             proof_logs.append("[Constraint Warning] Deliverable does not appear to use Markdown formatting.")
 
-    # Required Keywords / Flags / Ground Truth Entities
-    required_keywords = constraints.get("required_keywords", []) or constraints.get("ground_truth_entities", [])
+    # Required Keywords / Flags
+    required_keywords = list(constraints.get("required_keywords", []))
+    full_content = (text + " " + json.dumps(data) if data else text).lower()
+
     if required_keywords:
-        full_content = (text + " " + json.dumps(data) if data else text).lower()
         missing_kw = [kw for kw in required_keywords if kw.lower() not in full_content]
         if missing_kw:
             kw_ratio = (len(required_keywords) - len(missing_kw)) / len(required_keywords)
             constraint_score *= kw_ratio
-            proof_logs.append(f"[Constraint Error] Missing required keywords/entities: {missing_kw}")
+            proof_logs.append(f"[Constraint Error] Missing required keywords: {missing_kw}")
+
+    # Ground truth entity matches
+    if ground_truth_entities:
+        matched_ents = [ent for ent in ground_truth_entities if ent.lower() in full_content]
+        ent_ratio = len(matched_ents) / len(ground_truth_entities)
+        constraint_score *= (0.5 + 0.5 * ent_ratio)
+        proof_logs.append(f"[Ground Truth] Matched {len(matched_ents)}/{len(ground_truth_entities)} entities (ratio: {ent_ratio:.2f})")
 
     # Regex constraints
     regex_patterns = constraints.get("regex_patterns", [])
     if regex_patterns:
-        full_content = text + " " + (json.dumps(data) if data else "")
+        full_content_raw = text + " " + (json.dumps(data) if data else "")
         for pattern in regex_patterns:
-            if not re.search(pattern, full_content):
+            if not re.search(pattern, full_content_raw):
                 constraint_score -= 0.25
                 proof_logs.append(f"[Constraint Error] Regex pattern '{pattern}' not satisfied.")
 
@@ -101,7 +139,7 @@ async def verify_matcher(task_spec: TaskManifest, deliverable: DeliverablePayloa
 
     # 3. Prompt & Semantic Alignment
     prompt_tokens = set(re.findall(r"\b[a-z0-9_]{4,}\b", task_spec.prompt.lower()))
-    content_tokens = set(re.findall(r"\b[a-z0-9_]{4,}\b", (text + " " + json.dumps(data) if data else text).lower()))
+    content_tokens = set(re.findall(r"\b[a-z0-9_]{4,}\b", full_content))
     
     if prompt_tokens and content_tokens:
         overlap = content_tokens.intersection(prompt_tokens)

@@ -1,10 +1,13 @@
 """
 Coding Verifier Module (CodeValidatorBot).
-Executes, benchmarks, and validates submitted code in an isolated sandbox with timeout and AST security checks.
+Executes, benchmarks, and validates submitted code in an isolated sandbox with timeout,
+cross-platform process-tree cleanup, and AST security checks.
 """
 import ast
 import asyncio
 import os
+import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -56,6 +59,41 @@ def _check_ast_safety(code: str, allow_subprocess: bool = False) -> Tuple[bool, 
                 return False, "SecurityViolation: Introspection of __subclasses__ is forbidden"
 
     return True, "AST inspection passed"
+
+
+def _terminate_process_tree(proc: asyncio.subprocess.Process) -> None:
+    """
+    Cross-platform process-tree termination to avoid orphaned child processes on timeout.
+    """
+    if proc.returncode is not None:
+        return
+
+    pid = proc.pid
+    if not pid:
+        return
+
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                timeout=2,
+                check=False
+            )
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    else:
+        # POSIX process group termination
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
 
 async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload) -> EvaluationResult:
@@ -116,12 +154,10 @@ async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload
     max_latency_ms = task_spec.constraints.get("max_latency_ms", None)
 
     with tempfile.TemporaryDirectory() as sandbox_dir:
-        # Write submitted code
         solution_path = os.path.join(sandbox_dir, "solution.py")
         with open(solution_path, "w", encoding="utf-8") as f:
             f.write(code)
 
-        # Write any additional files
         for fname, content in deliverable.submitted_files.items():
             if fname != "solution.py":
                 fpath = os.path.join(sandbox_dir, fname)
@@ -129,17 +165,14 @@ async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload
                 with open(fpath, "w", encoding="utf-8") as f:
                     f.write(content)
 
-        # Write test suite if specified
         test_path = os.path.join(sandbox_dir, "test_solution.py")
         if test_code.strip():
             with open(test_path, "w", encoding="utf-8") as f:
                 f.write(test_code)
             cmd = [sys.executable, "-m", "pytest", "-v", "test_solution.py"]
         else:
-            # Standalone execution
             cmd = [sys.executable, "solution.py"]
 
-        # Run process
         start_time = time.perf_counter()
         try:
             clean_env = os.environ.copy()
@@ -164,11 +197,11 @@ async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload
                 stderr_str = stderr_bytes.decode("utf-8", errors="replace")
                 returncode = proc.returncode
             except asyncio.TimeoutError:
-                proc.kill()
+                _terminate_process_tree(proc)
                 await proc.wait()
                 benchmark_metrics["timed_out"] = True
                 benchmark_metrics["execution_time_ms"] = timeout_sec * 1000.0
-                proof_logs.append(f"[Execution Cap] Process timed out after {timeout_sec}s")
+                proof_logs.append(f"[Execution Cap] Process timed out after {timeout_sec}s and process tree was terminated.")
                 return EvaluationResult(
                     task_id=task_id,
                     verdict="FAIL",
@@ -195,11 +228,9 @@ async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload
     benchmark_metrics["returncode"] = returncode
     proof_logs.append(f"[Execution Output]\nSTDOUT:\n{stdout_str}\nSTDERR:\n{stderr_str}")
 
-    # Parse Pytest results or returncode
     score = 0.0
     if returncode == 0:
         score = 1.0
-        # If latency budget exists, penalize latency overshoot
         if max_latency_ms and exec_time_ms > max_latency_ms:
             proof_logs.append(f"[Latency Alert] Exec time {exec_time_ms:.2f}ms exceeds target {max_latency_ms}ms")
             latency_factor = max(0.5, max_latency_ms / exec_time_ms)
