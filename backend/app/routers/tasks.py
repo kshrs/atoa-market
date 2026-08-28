@@ -224,3 +224,152 @@ async def assign_task(
     )
     
     return task
+
+
+# ---------------------------------------------------------------------------
+# Deliverables & Settlement Pipeline (Part 3)
+# ---------------------------------------------------------------------------
+
+from backend.app.models import DeliverableSubmission, VerificationReport
+from backend.app.services.verification_oracle import verification_oracle
+from backend.app.services.web3_escrow import web3_service
+
+
+@router.post("/{task_id}/deliverables", response_model=TaskResponse)
+async def submit_deliverable(task_id: str, submission: DeliverableSubmission):
+    """
+    Submit completed task deliverable (code, research JSON, or query answer).
+    1. Validates that task exists and is in IN_PROGRESS state.
+    2. Verifies that the submitting worker is the assigned worker.
+    3. Runs programmatic verification oracle across the task's category.
+    4. IF PASS:
+       - Triggers Web3 payout & returns worker collateral bond.
+       - Credits worker wallet balance (+payout) and reputation (+5).
+       - Broadcasts PAYOUT_SETTLED event.
+    5. IF FAIL:
+       - Triggers Web3 slashing of worker bond.
+       - Slashes worker wallet collateral & slashes reputation (-20).
+       - Refunds escrow budget back to requester.
+       - Broadcasts WORKER_SLASHED event.
+    """
+    task = await state_store.get_task(task_id)
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task with ID '{task_id}' not found."
+        )
+    if task.status != TaskStatus.IN_PROGRESS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Task is in '{task.status.value}' state and cannot accept deliverables. Must be 'IN_PROGRESS'."
+        )
+    if task.assigned_worker and task.assigned_worker != submission.worker_address:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Worker '{submission.worker_address}' is not assigned to this task. Assigned to: '{task.assigned_worker}'."
+        )
+    
+    # 1. Record deliverable and set state to VERIFYING
+    await state_store.record_deliverable(submission)
+    
+    await ws_manager.broadcast_event(
+        event_type=EventType.DELIVERABLE_SUBMITTED,
+        data={
+            "task_id": task_id,
+            "worker_address": submission.worker_address,
+            "category": task.category.value,
+            "status": TaskStatus.VERIFYING.value,
+        }
+    )
+    
+    # 2. Run programmatic verification oracle
+    report: VerificationReport = await verification_oracle.verify_deliverable(
+        task_id=task_id,
+        category=task.category,
+        artifact_payload=submission.artifact_payload,
+        validation_spec=task.validation_spec
+    )
+    
+    # Broadcast verification report
+    await ws_manager.broadcast_event(
+        event_type=EventType.VERIFICATION_COMPLETED,
+        data={
+            "task_id": task_id,
+            "category": task.category.value,
+            "passed": report.passed,
+            "score": report.score,
+            "error_message": report.error_message,
+            "logs": report.logs,
+        }
+    )
+    
+    # 3. Handle Settlement or Slashing based on verification verdict
+    if report.passed:
+        # Payout & Settlement Path
+        tx = await web3_service.settle_successful_payout(
+            task_id=task_id,
+            worker_address=submission.worker_address,
+            payout_usdc=task.budget_usdc
+        )
+        
+        # Credit worker and return collateral bond
+        await state_store.credit_payout(submission.worker_address, task.budget_usdc)
+        await state_store.unlock_worker_bond(submission.worker_address, task.required_worker_bond)
+        
+        task = await state_store.record_verification_and_settle(
+            task_id=task_id,
+            report=report,
+            settlement_tx_hash=tx.get("tx_hash")
+        )
+        
+        # Broadcast settlement event
+        await ws_manager.broadcast_event(
+            event_type=EventType.PAYOUT_SETTLED,
+            data={
+                "task_id": task_id,
+                "worker_address": submission.worker_address,
+                "payout_amount_usdc": task.budget_usdc,
+                "worker_bond_returned": task.required_worker_bond,
+                "tx_hash": tx.get("tx_hash"),
+                "status": TaskStatus.SETTLED.value,
+            }
+        )
+    else:
+        # Slashing Path (Malicious / Failed submission)
+        tx = await web3_service.execute_slash(
+            task_id=task_id,
+            worker_address=submission.worker_address,
+            requester_address=task.requester_address,
+            bond_amount_usdc=task.required_worker_bond
+        )
+        
+        # Slash worker collateral bond and refund requester escrow
+        await state_store.slash_worker(
+            worker_address=submission.worker_address,
+            requester_address=task.requester_address,
+            bond_amount=task.required_worker_bond
+        )
+        await state_store.refund_requester_escrow(task.requester_address, task.budget_usdc)
+        
+        task = await state_store.record_verification_and_settle(
+            task_id=task_id,
+            report=report,
+            settlement_tx_hash=tx.get("tx_hash")
+        )
+        
+        # Broadcast slashing event
+        await ws_manager.broadcast_event(
+            event_type=EventType.WORKER_SLASHED,
+            data={
+                "task_id": task_id,
+                "worker_address": submission.worker_address,
+                "requester_address": task.requester_address,
+                "slashed_bond_usdc": task.required_worker_bond,
+                "escrow_refunded_usdc": task.budget_usdc,
+                "reason": report.error_message or "Failed programmatic verification criteria.",
+                "tx_hash": tx.get("tx_hash"),
+                "status": TaskStatus.SLASHED.value,
+            }
+        )
+        
+    return task
