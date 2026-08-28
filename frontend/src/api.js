@@ -1,6 +1,7 @@
 /**
  * ATOA API & WebSocket Client
  * Connects the live React Dashboard directly to the FastAPI Marketplace Backend.
+ * Automatically fails over silently to the in-browser simulation when deployed standalone (e.g. GitHub Pages).
  */
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
@@ -8,47 +9,45 @@ const WS_BASE = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/v1/events/ws
 
 export async function fetchAnalytics() {
   try {
-    const res = await fetch(`${API_BASE}/v1/analytics/overview`);
-    if (!res.ok) throw new Error('Failed to fetch analytics');
+    const res = await fetch(`${API_BASE}/v1/analytics/overview`, { signal: AbortSignal.timeout(2000) });
+    if (!res.ok) return null;
     return await res.json();
   } catch (err) {
-    console.warn('[ATOA API] Analytics fetch failed, fallback to local', err);
     return null;
   }
 }
 
 export async function fetchTasks() {
   try {
-    const res = await fetch(`${API_BASE}/v1/tasks`);
-    if (!res.ok) throw new Error('Failed to fetch tasks');
+    const res = await fetch(`${API_BASE}/v1/tasks`, { signal: AbortSignal.timeout(2000) });
+    if (!res.ok) return null;
     return await res.json();
   } catch (err) {
-    console.warn('[ATOA API] Tasks fetch failed, fallback to local', err);
-    return [];
+    return null;
   }
 }
 
 export async function fetchWallets() {
   try {
-    const res = await fetch(`${API_BASE}/v1/wallets`);
-    if (!res.ok) throw new Error('Failed to fetch wallets');
+    const res = await fetch(`${API_BASE}/v1/wallets`, { signal: AbortSignal.timeout(2000) });
+    if (!res.ok) return null;
     return await res.json();
   } catch (err) {
-    console.warn('[ATOA API] Wallets fetch failed, fallback to local', err);
-    return [];
+    return null;
   }
 }
 
 export function subscribeToLiveEvents(onEvent, onStatusChange) {
   let ws = null;
   let reconnectTimer = null;
+  let isClosed = false;
 
   function connect() {
+    if (isClosed) return;
     try {
       ws = new WebSocket(WS_BASE);
 
       ws.onopen = () => {
-        console.log('[ATOA WebSocket] Connected to live backend event feed');
         if (onStatusChange) onStatusChange(true);
       };
 
@@ -57,29 +56,32 @@ export function subscribeToLiveEvents(onEvent, onStatusChange) {
           const payload = JSON.parse(event.data);
           onEvent(payload);
         } catch (e) {
-          console.error('[ATOA WebSocket] Error parsing message', e);
+          // ignore parsing error
         }
       };
 
       ws.onclose = () => {
-        console.log('[ATOA WebSocket] Disconnected. Reconnecting in 3s...');
         if (onStatusChange) onStatusChange(false);
-        reconnectTimer = setTimeout(connect, 3000);
+        if (!isClosed) {
+          reconnectTimer = setTimeout(connect, 5000);
+        }
       };
 
-      ws.onerror = (err) => {
-        console.warn('[ATOA WebSocket] Connection error:', err);
-        ws.close();
+      ws.onerror = () => {
+        if (ws) ws.close();
       };
     } catch (err) {
-      console.warn('[ATOA WebSocket] Setup failed:', err);
-      reconnectTimer = setTimeout(connect, 3000);
+      if (onStatusChange) onStatusChange(false);
+      if (!isClosed) {
+        reconnectTimer = setTimeout(connect, 5000);
+      }
     }
   }
 
   connect();
 
   return () => {
+    isClosed = true;
     if (reconnectTimer) clearTimeout(reconnectTimer);
     if (ws) ws.close();
   };
