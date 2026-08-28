@@ -453,3 +453,77 @@ async def test_query_validator_live_search_enrichment(monkeypatch):
     assert len(report.validation_details["ground_truth_entities"]) >= 4
 
 
+# =========================================================================
+# 6. PLAN 003: TELEMETRY ENRICHMENT & HASH DETERMINISM TESTS
+# =========================================================================
+
+@pytest.mark.asyncio
+async def test_failure_telemetry_categorization():
+    """Verify that failure_category is accurately injected into validation_details."""
+    # 1. Security Violation
+    rep_sec = await verify_deliverable(
+        "task_telemetry_01",
+        "code_generation",
+        {"submitted_code": "import ctypes\ndef f(): pass"},
+        {"test_suite": "assert True"}
+    )
+    assert rep_sec.passed is False
+    assert rep_sec.validation_details.get("failure_category") == "SECURITY_VIOLATION"
+
+    # 2. Timeout
+    rep_timeout = await verify_deliverable(
+        "task_telemetry_02",
+        "code_generation",
+        {"submitted_code": "import time\nwhile True: time.sleep(0.01)"},
+        {"timeout_seconds": 0.5}
+    )
+    assert rep_timeout.passed is False
+    assert rep_timeout.validation_details.get("failure_category") == "TIMEOUT"
+
+    # 3. Schema Mismatch
+    rep_schema = await verify_deliverable(
+        "task_telemetry_03",
+        "research",
+        {"submitted_data": {"wrong_field": 123}},
+        {"schema": {"type": "object", "required": ["expected_field"]}}
+    )
+    assert rep_schema.passed is False
+    assert rep_schema.validation_details.get("failure_category") == "SCHEMA_MISMATCH"
+
+    # 4. Success (NONE)
+    rep_pass = await verify_deliverable(
+        "task_telemetry_04",
+        "query",
+        {"submitted_text": "Ethereum network"},
+        {"required_keywords": ["Ethereum"]}
+    )
+    assert rep_pass.passed is True
+    assert rep_pass.validation_details.get("failure_category") == "NONE"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_deterministic_hash_seed():
+    """Verify that PYTHONHASHSEED is set to '0' during sandbox code execution."""
+    task_id = "task_hash_01"
+    category = "code_generation"
+    artifact_payload = {
+        "submitted_code": """
+import os
+def check_hash_seed():
+    return os.environ.get("PYTHONHASHSEED", "")
+"""
+    }
+    validation_spec = {
+        "test_suite": """
+from solution import check_hash_seed
+def test_seed():
+    assert check_hash_seed() == "0"
+"""
+    }
+
+    report = await verify_deliverable(task_id, category, artifact_payload, validation_spec)
+    assert report.passed is True
+    assert report.score == 1.0
+
+
+

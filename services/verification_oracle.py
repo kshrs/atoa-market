@@ -64,12 +64,16 @@ async def verify_deliverable(
         if not err_msg:
             err_msg = f"Verification failed with score {eval_result.score:.2f} (passing threshold: {task_spec.passing_threshold})"
 
+    details = dict(eval_result.benchmark_metrics)
+    if "failure_category" not in details:
+        details["failure_category"] = "NONE" if passed else "EXECUTION_ERROR"
+
     return VerificationReport(
         task_id=task_id,
         category=category,
         passed=passed,
         score=eval_result.score,
-        validation_details=eval_result.benchmark_metrics,
+        validation_details=details,
         error_message=err_msg,
         logs=eval_result.proof_logs,
         timestamp=time.time()

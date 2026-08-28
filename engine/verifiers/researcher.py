@@ -67,9 +67,11 @@ async def verify_researcher(task_spec: TaskManifest, deliverable: DeliverablePay
         "grounding_score": 0.0,
         "completeness_score": 0.0,
         "hallucination_penalty": 0.0,
+        "failure_category": "NONE",
     }
 
     if not text.strip() and not data:
+        benchmark_metrics["failure_category"] = "EMPTY_PAYLOAD"
         return EvaluationResult(
             task_id=task_id,
             verdict="FAIL",
@@ -86,6 +88,7 @@ async def verify_researcher(task_spec: TaskManifest, deliverable: DeliverablePay
     if target_schema:
         if data is None:
             benchmark_metrics["schema_valid"] = False
+            benchmark_metrics["failure_category"] = "SCHEMA_MISMATCH"
             benchmark_metrics["schema_errors"] = ["No JSON data submitted for required schema."]
             proof_logs.append("[Schema Error] Task specified JSON schema but deliverable contained no structured data.")
             schema_score = 0.0
@@ -94,6 +97,7 @@ async def verify_researcher(task_spec: TaskManifest, deliverable: DeliverablePay
             benchmark_metrics["schema_valid"] = is_valid
             benchmark_metrics["schema_errors"] = errs
             if not is_valid:
+                benchmark_metrics["failure_category"] = "SCHEMA_MISMATCH"
                 proof_logs.append(f"[Schema Error] jsonschema validation failed: {errs}")
                 schema_score = max(0.0, 1.0 - (len(errs) * 0.25))
             else:
@@ -181,6 +185,16 @@ async def verify_researcher(task_spec: TaskManifest, deliverable: DeliverablePay
 
     final_score = max(0.0, min(1.0, raw_score))
     verdict: "Literal['PASS', 'FAIL']" = "PASS" if final_score >= task_spec.passing_threshold and benchmark_metrics["schema_valid"] else "FAIL"
+    if verdict == "PASS":
+        benchmark_metrics["failure_category"] = "NONE"
+    elif benchmark_metrics["failure_category"] == "NONE":
+        if not benchmark_metrics["schema_valid"]:
+            benchmark_metrics["failure_category"] = "SCHEMA_MISMATCH"
+        elif hallucination_penalty > 0 or citation_ratio < 0.5:
+            benchmark_metrics["failure_category"] = "GROUNDING_FAILURE"
+        else:
+            benchmark_metrics["failure_category"] = "COMPLETENESS_ERROR"
+
     slashing = final_score < task_spec.slashing_threshold or not benchmark_metrics["schema_valid"]
 
     proof_logs.append(f"[Score Summary] Schema={schema_score:.2f}, Completeness={completeness:.2f}, Citations={citation_ratio:.2f} -> Final Score={final_score:.2f}")

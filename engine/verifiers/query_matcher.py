@@ -50,6 +50,7 @@ async def verify_matcher(task_spec: TaskManifest, deliverable: DeliverablePayloa
         "prompt_alignment": 1.0,
         "live_search_enabled": False,
         "ground_truth_entities": [],
+        "failure_category": "NONE",
     }
 
     # Extract deliverable content for matching
@@ -67,6 +68,7 @@ async def verify_matcher(task_spec: TaskManifest, deliverable: DeliverablePayloa
     if target_schema:
         if data is None:
             benchmark_metrics["schema_valid"] = False
+            benchmark_metrics["failure_category"] = "SCHEMA_MISMATCH"
             proof_logs.append("[Schema Error] Task specified JSON schema but deliverable contains no valid JSON object.")
             schema_score = 0.0
         else:
@@ -74,6 +76,7 @@ async def verify_matcher(task_spec: TaskManifest, deliverable: DeliverablePayloa
             benchmark_metrics["schema_valid"] = is_valid
             benchmark_metrics["missing_fields"] = errs
             if not is_valid:
+                benchmark_metrics["failure_category"] = "SCHEMA_MISMATCH"
                 proof_logs.append(f"[Schema Error] jsonschema validation failed: {errs}")
                 schema_score = max(0.0, 1.0 - (len(errs) * 0.25))
             else:
@@ -164,6 +167,14 @@ async def verify_matcher(task_spec: TaskManifest, deliverable: DeliverablePayloa
 
     final_score = max(0.0, min(1.0, final_score))
     verdict: "Literal['PASS', 'FAIL']" = "PASS" if final_score >= task_spec.passing_threshold and benchmark_metrics["schema_valid"] else "FAIL"
+    if verdict == "PASS":
+        benchmark_metrics["failure_category"] = "NONE"
+    elif benchmark_metrics["failure_category"] == "NONE":
+        if not benchmark_metrics["schema_valid"]:
+            benchmark_metrics["failure_category"] = "SCHEMA_MISMATCH"
+        else:
+            benchmark_metrics["failure_category"] = "CONSTRAINT_MISMATCH"
+
     slashing = final_score < task_spec.slashing_threshold or not benchmark_metrics["schema_valid"]
 
     proof_logs.append(f"[Score Summary] Schema={schema_score:.2f}, Constraints={constraint_score:.2f}, PromptAlign={prompt_alignment:.2f} -> Final Score={final_score:.2f}")

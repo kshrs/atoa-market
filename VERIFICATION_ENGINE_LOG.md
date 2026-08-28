@@ -7,7 +7,7 @@ All components strictly implement Developer **`bk`'s role** from `splitup_file.m
 
 ---
 
-## 1. Completed Deliverables & Hardening
+## 1. Completed Deliverables & Hardening Plans
 
 ### Official I/O Contract & Oracle Service (`services/verification_oracle.py`)
 - Implemented exact sprint entrypoint:
@@ -41,32 +41,46 @@ All components strictly implement Developer **`bk`'s role** from `splitup_file.m
 - **Query Ground-Truth Resolver (`engine/verifiers/query_matcher.py`)**:
   - Implemented `resolve_query_ground_truth` and `enable_live_search` constraint support for live entity extraction and matching.
 
-### Test Suite (`tests/test_verifiers.py`)
-- **17/17 automated tests passing (100% pass rate in ~5.8s)**:
-  1. `test_verify_deliverable_code_generation_pass`: Code generation contract test $\to$ `VerificationReport` with `passed=True`.
-  2. `test_verify_deliverable_research_jsonschema_pass`: Deep `jsonschema` validation passes for compliant research JSON.
-  3. `test_verify_deliverable_research_jsonschema_invalid`: Nested `jsonschema` constraint violation rejected.
-  4. `test_verify_deliverable_query_bot`: Query bot fact and regex assertion validation.
-  5. `test_coding_verifier_blocks_eval`: AST blocks `eval()` with security slashing.
-  6. `test_coding_verifier_blocks_exec`: AST blocks `exec()` with security slashing.
-  7. `test_coding_verifier_blocks_dynamic_import`: AST blocks `__import__()` with security slashing.
-  8. `test_coding_verifier_blocks_subclasses_introspection`: AST blocks `__subclasses__` gadget chain.
-  9. `test_sync_runner_standalone`: Sync runner executes cleanly in standalone mode.
-  10. `test_sync_runner_inside_active_async_loop`: Sync runner executes safely inside active event loop.
-  11. `test_coding_verifier_valid_submission`: Sandbox execution runs pytest suite cleanly.
-  12. `test_coding_verifier_timeout_slashed`: Sandbox timeout enforcement.
-  13. `test_researcher_verifier_grounded_report`: Grounding and citation checks.
-  14. `test_dispatcher_backend_payload`: Legacy backend payload adapter compatibility.
-  15. `test_cli_execution`: End-to-end CLI execution test.
-  16. `test_process_tree_cleanup_on_timeout`: Plan 002 process tree termination test.
-  17. `test_query_validator_live_search_enrichment`: Plan 002 live search ground truth test.
+### Packaging, Hash Determinism & UI Telemetry (Plan 003)
+- **Declarative Packaging (`pyproject.toml`)**:
+  - Standardized dependency definitions (`pydantic>=2.10.0`, `jsonschema>=4.20.0`) and pytest `asyncio_mode = "auto"`.
+- **Hash Seed Determinism (`engine/verifiers/coding.py`)**:
+  - Sets `PYTHONHASHSEED="0"` in subprocess environment for reproducible code evaluations.
+- **Structured Failure Telemetry (`services/verification_oracle.py`)**:
+  - Injects typed `failure_category` (`"NONE"`, `"SECURITY_VIOLATION"`, `"TIMEOUT"`, `"SCHEMA_MISMATCH"`, `"TEST_FAILURE"`, `"GROUNDING_FAILURE"`, `"CONSTRAINT_MISMATCH"`) into `validation_details` for live rendering on `nvss`'s dashboard.
 
 ---
 
-## 2. Acceptance Gates
+## 2. Test Suite & Validation Matrix (19/19 Tests Passing)
+
+| Test Case | Scope | Outcome |
+|---|---|---|
+| `test_verify_deliverable_code_generation_pass` | Oracle Contract (Code) | **PASS** |
+| `test_verify_deliverable_research_jsonschema_pass` | Oracle Contract (Research jsonschema) | **PASS** |
+| `test_verify_deliverable_research_jsonschema_invalid` | Nested jsonschema Rejection | **PASS** |
+| `test_verify_deliverable_query_bot` | Oracle Contract (Query Assertions) | **PASS** |
+| `test_coding_verifier_blocks_eval` | AST Security (eval block) | **PASS** |
+| `test_coding_verifier_blocks_exec` | AST Security (exec block) | **PASS** |
+| `test_coding_verifier_blocks_dynamic_import` | AST Security (__import__ block) | **PASS** |
+| `test_coding_verifier_blocks_subclasses_introspection` | AST Security (__subclasses__ block) | **PASS** |
+| `test_sync_runner_standalone` | ThreadPool Sync Execution | **PASS** |
+| `test_sync_runner_inside_active_async_loop` | ThreadPool Active Loop Safety | **PASS** |
+| `test_coding_verifier_valid_submission` | Pytest Execution & Exitcode | **PASS** |
+| `test_coding_verifier_timeout_slashed` | Sandbox Timeout Cap & Slashing | **PASS** |
+| `test_researcher_verifier_grounded_report` | Citation Grounding & Completeness | **PASS** |
+| `test_dispatcher_backend_payload` | Backend `/v1/evaluations` Payload | **PASS** |
+| `test_cli_execution` | CLI End-to-End Execution | **PASS** |
+| `test_process_tree_cleanup_on_timeout` | Process Tree Termination (Plan 002) | **PASS** |
+| `test_query_validator_live_search_enrichment` | Live Query Entity Resolver (Plan 002) | **PASS** |
+| `test_failure_telemetry_categorization` | UI Failure Categorization (Plan 003) | **PASS** |
+| `test_sandbox_deterministic_hash_seed` | PYTHONHASHSEED=0 Determinism (Plan 003) | **PASS** |
+
+---
+
+## 3. Acceptance Gates
 
 | Gate | Status | Description |
 |---|---|---|
-| **Gate 1: Code Review & TDD Hardening** | **PASSED** | Plans 001 & 002 and `splitup_file.md` contracts implemented and verified with 17/17 passing tests. |
-| **Gate 2: Manual Human Verification** | **PENDING** | Awaiting final explicit human sign-off. |
-| **Gate 3: Merge to `test` branch** | **BLOCKED** | Awaiting explicit "Approved, merge to test" response from the user. |
+| **Gate 1: Code Review & TDD Hardening** | **PASSED** | Plans 001, 002, 003 and `splitup_file.md` contracts complete with 19/19 passing tests. |
+| **Gate 2: Manual Human Verification** | **PENDING** | Awaiting final explicit human approval. |
+| **Gate 3: Merge to `test` branch** | **BLOCKED** | Awaiting explicit "Approved, merge to test" sign-off. |

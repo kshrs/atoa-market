@@ -113,9 +113,11 @@ async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload
         "execution_time_ms": 0.0,
         "timed_out": False,
         "returncode": None,
+        "failure_category": "NONE",
     }
 
     if not code.strip():
+        benchmark_metrics["failure_category"] = "EMPTY_PAYLOAD"
         return EvaluationResult(
             task_id=task_id,
             verdict="FAIL",
@@ -136,6 +138,7 @@ async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload
     if not is_safe:
         benchmark_metrics["ast_safe"] = False
         is_malicious = "SecurityViolation" in safety_msg
+        benchmark_metrics["failure_category"] = "SECURITY_VIOLATION" if is_malicious else "SYNTAX_ERROR"
         return EvaluationResult(
             task_id=task_id,
             verdict="FAIL",
@@ -178,6 +181,7 @@ async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload
             clean_env = os.environ.copy()
             clean_env["PYTHONPATH"] = sandbox_dir
             clean_env["PYTHONDONTWRITEBYTECODE"] = "1"
+            clean_env["PYTHONHASHSEED"] = "0"
 
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -200,6 +204,7 @@ async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload
                 _terminate_process_tree(proc)
                 await proc.wait()
                 benchmark_metrics["timed_out"] = True
+                benchmark_metrics["failure_category"] = "TIMEOUT"
                 benchmark_metrics["execution_time_ms"] = timeout_sec * 1000.0
                 proof_logs.append(f"[Execution Cap] Process timed out after {timeout_sec}s and process tree was terminated.")
                 return EvaluationResult(
@@ -213,6 +218,7 @@ async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload
                 )
 
         except Exception as ex:
+            benchmark_metrics["failure_category"] = "EXECUTION_ERROR"
             proof_logs.append(f"[Execution Error] {str(ex)}")
             return EvaluationResult(
                 task_id=task_id,
@@ -236,6 +242,7 @@ async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload
             latency_factor = max(0.5, max_latency_ms / exec_time_ms)
             score = score * latency_factor
     else:
+        benchmark_metrics["failure_category"] = "TEST_FAILURE"
         import re
         passed_m = re.search(r"(\d+) passed", stdout_str)
         failed_m = re.search(r"(\d+) failed", stdout_str)
@@ -248,6 +255,8 @@ async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload
             score = p_count / tot
 
     verdict: "Literal['PASS', 'FAIL']" = "PASS" if score >= task_spec.passing_threshold else "FAIL"
+    if verdict == "PASS":
+        benchmark_metrics["failure_category"] = "NONE"
     slashing = score < task_spec.slashing_threshold
 
     return EvaluationResult(
