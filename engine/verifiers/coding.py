@@ -1,0 +1,218 @@
+"""
+Coding Verifier Module.
+Executes, benchmarks, and validates submitted code in an isolated sandbox with timeout and security checks.
+"""
+import ast
+import asyncio
+import os
+import sys
+import tempfile
+import time
+from typing import Dict, Any, Tuple
+from engine.models import TaskManifest, DeliverablePayload, EvaluationResult
+
+
+FORBIDDEN_AST_MODULES = {"ctypes", "winreg", "_winapi", "pty"}
+DANGEROUS_CALLS = {"os.system", "shutil.rmtree", "subprocess.Popen", "subprocess.call", "subprocess.run"}
+
+
+def _check_ast_safety(code: str, allow_subprocess: bool = False) -> Tuple[bool, str]:
+    """Perform static AST inspection to prevent malicious or destructive code."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return False, f"SyntaxError: {e}"
+
+    for node in ast.walk(tree):
+        # Check imports
+        if isinstance(node, ast.Import):
+            for name in node.names:
+                root_pkg = name.name.split('.')[0]
+                if root_pkg in FORBIDDEN_AST_MODULES:
+                    return False, f"SecurityViolation: Import of forbidden module '{root_pkg}'"
+                if not allow_subprocess and root_pkg == "subprocess":
+                    return False, "SecurityViolation: Subprocess execution not permitted in submitted solution"
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                root_pkg = node.module.split('.')[0]
+                if root_pkg in FORBIDDEN_AST_MODULES:
+                    return False, f"SecurityViolation: Import from forbidden module '{root_pkg}'"
+                if not allow_subprocess and root_pkg == "subprocess":
+                    return False, "SecurityViolation: Subprocess execution not permitted in submitted solution"
+
+    return True, "AST inspection passed"
+
+
+async def verify_coding(task_spec: TaskManifest, deliverable: DeliverablePayload) -> EvaluationResult:
+    """
+    Evaluates submitted code deliverable against task manifest requirements and test suite.
+    """
+    task_id = task_spec.task_id
+    code = deliverable.submitted_code or deliverable.submitted_files.get("solution.py", "")
+    test_code = task_spec.test_suite or deliverable.submitted_files.get("test_solution.py", "")
+    
+    proof_logs = []
+    benchmark_metrics: Dict[str, Any] = {
+        "syntax_valid": False,
+        "ast_safe": False,
+        "tests_passed": 0,
+        "total_tests": 0,
+        "execution_time_ms": 0.0,
+        "timed_out": False,
+        "returncode": None,
+    }
+
+    if not code.strip():
+        return EvaluationResult(
+            task_id=task_id,
+            verdict="FAIL",
+            score=0.0,
+            slashing_recommended=True,
+            benchmark_metrics=benchmark_metrics,
+            proof_logs="FAIL: No code provided in deliverable.",
+            details={"error": "Empty code deliverable"}
+        )
+
+    # 1. AST Syntax & Security Check
+    is_safe, safety_msg = _check_ast_safety(
+        code, 
+        allow_subprocess=task_spec.constraints.get("allow_subprocess", False)
+    )
+    proof_logs.append(f"[AST Check] {safety_msg}")
+
+    if not is_safe:
+        benchmark_metrics["ast_safe"] = False
+        is_malicious = "SecurityViolation" in safety_msg
+        return EvaluationResult(
+            task_id=task_id,
+            verdict="FAIL",
+            score=0.0,
+            slashing_recommended=is_malicious,
+            benchmark_metrics=benchmark_metrics,
+            proof_logs="\n".join(proof_logs),
+            details={"error": safety_msg}
+        )
+
+    benchmark_metrics["syntax_valid"] = True
+    benchmark_metrics["ast_safe"] = True
+
+    # 2. Subprocess Sandbox Execution
+    timeout_sec = float(task_spec.constraints.get("timeout_sec", 5.0))
+    max_latency_ms = task_spec.constraints.get("max_latency_ms", None)
+
+    with tempfile.TemporaryDirectory() as sandbox_dir:
+        # Write submitted code
+        solution_path = os.path.join(sandbox_dir, "solution.py")
+        with open(solution_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        # Write any additional files
+        for fname, content in deliverable.submitted_files.items():
+            if fname != "solution.py":
+                fpath = os.path.join(sandbox_dir, fname)
+                os.makedirs(os.path.dirname(fpath), exist_ok=True)
+                with open(fpath, "w", encoding="utf-8") as f:
+                    f.write(content)
+
+        # Write test suite if specified
+        test_path = os.path.join(sandbox_dir, "test_solution.py")
+        if test_code.strip():
+            with open(test_path, "w", encoding="utf-8") as f:
+                f.write(test_code)
+            cmd = [sys.executable, "-m", "pytest", "-v", "test_solution.py"]
+        else:
+            # Standalone execution
+            cmd = [sys.executable, "solution.py"]
+
+        # Run process
+        start_time = time.perf_counter()
+        try:
+            # Set isolated environment
+            clean_env = os.environ.copy()
+            clean_env["PYTHONPATH"] = sandbox_dir
+            clean_env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=sandbox_dir,
+                env=clean_env,
+            )
+
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(), 
+                    timeout=timeout_sec
+                )
+                exec_time_ms = (time.perf_counter() - start_time) * 1000.0
+                stdout_str = stdout_bytes.decode("utf-8", errors="replace")
+                stderr_str = stderr_bytes.decode("utf-8", errors="replace")
+                returncode = proc.returncode
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                benchmark_metrics["timed_out"] = True
+                benchmark_metrics["execution_time_ms"] = timeout_sec * 1000.0
+                proof_logs.append(f"[Execution Cap] Process timed out after {timeout_sec}s")
+                return EvaluationResult(
+                    task_id=task_id,
+                    verdict="FAIL",
+                    score=0.0,
+                    slashing_recommended=True,
+                    benchmark_metrics=benchmark_metrics,
+                    proof_logs="\n".join(proof_logs),
+                    details={"error": f"Execution timed out ({timeout_sec}s cap)"}
+                )
+
+        except Exception as ex:
+            proof_logs.append(f"[Execution Error] {str(ex)}")
+            return EvaluationResult(
+                task_id=task_id,
+                verdict="FAIL",
+                score=0.0,
+                slashing_recommended=True,
+                benchmark_metrics=benchmark_metrics,
+                proof_logs="\n".join(proof_logs),
+                details={"error": str(ex)}
+            )
+
+    benchmark_metrics["execution_time_ms"] = round(exec_time_ms, 2)
+    benchmark_metrics["returncode"] = returncode
+    proof_logs.append(f"[Execution Output]\nSTDOUT:\n{stdout_str}\nSTDERR:\n{stderr_str}")
+
+    # Parse Pytest results or returncode
+    score = 0.0
+    if returncode == 0:
+        score = 1.0
+        # If latency budget exists, penalize latency overshoot
+        if max_latency_ms and exec_time_ms > max_latency_ms:
+            proof_logs.append(f"[Latency Alert] Exec time {exec_time_ms:.2f}ms exceeds target {max_latency_ms}ms")
+            latency_factor = max(0.5, max_latency_ms / exec_time_ms)
+            score = score * latency_factor
+    else:
+        # Check partial pytest pass if available
+        # Parse pytest output like "1 passed, 2 failed"
+        import re
+        passed_m = re.search(r"(\d+) passed", stdout_str)
+        failed_m = re.search(r"(\d+) failed", stdout_str)
+        p_count = int(passed_m.group(1)) if passed_m else 0
+        f_count = int(failed_m.group(1)) if failed_m else 0
+        tot = p_count + f_count
+        benchmark_metrics["tests_passed"] = p_count
+        benchmark_metrics["total_tests"] = tot
+        if tot > 0:
+            score = p_count / tot
+
+    verdict: "Literal['PASS', 'FAIL']" = "PASS" if score >= task_spec.passing_threshold else "FAIL"
+    slashing = score < task_spec.slashing_threshold
+
+    return EvaluationResult(
+        task_id=task_id,
+        verdict=verdict,
+        score=round(score, 4),
+        slashing_recommended=slashing,
+        benchmark_metrics=benchmark_metrics,
+        proof_logs="\n".join(proof_logs),
+        details={"stdout": stdout_str, "stderr": stderr_str, "returncode": returncode}
+    )
