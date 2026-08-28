@@ -1,8 +1,10 @@
-# Python & Bytecode
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
+# Python Bytecode & Cache Directories (at any depth)
+**/*__pycache__*
+**/*.py[cod]
+**/*$py.class
+*.pyc
+*.pyo
+*.pyd
 .Python
 build/
 develop-eggs/
@@ -23,15 +25,16 @@ share/python-wheels/
 MANIFEST
 
 # Virtual Environments
-.venv/
-venv/
-ENV/
-env/
-env.bak/
-venv.bak/
+**/.venv/
+**/venv/
+**/ENV/
+**/env/
+**/env.bak/
+**/venv.bak/
 
 # Testing & Coverage
 .pytest_cache/
+**/.pytest_cache/
 .coverage
 .coverage.*
 .cache
@@ -43,6 +46,7 @@ coverage.xml
 
 # Node & Frontend
 node_modules/
+**/node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
