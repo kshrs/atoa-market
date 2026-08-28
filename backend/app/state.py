@@ -1,6 +1,7 @@
 """
 ATOA In-Memory State Store & Lifecycle State Machine.
 Maintains thread-safe in-memory ledgers for tasks, bids, deliverables, agent wallets, and reputation.
+Dynamically tracks only active Delegators and Bidders interacting via MCP/backend.
 """
 
 import asyncio
@@ -19,7 +20,6 @@ from backend.app.models import (
     VerificationReport,
     WalletState,
     NetworkAnalytics,
-    EventEnvelope,
     EventType,
 )
 
@@ -32,47 +32,28 @@ class StateStore:
         self.deliverables: Dict[str, DeliverableSubmission] = {}
         self.verification_reports: Dict[str, VerificationReport] = {}
         self.wallets: Dict[str, WalletState] = {}
-        
-        # Pre-seed demo agent wallets
-        self._seed_default_wallets()
-
-    def _seed_default_wallets(self):
-        """Seed initial agent wallets for demonstration."""
-        default_agents = [
-            ("0xRequester_A1", "Requester Daemon", "Requester", 1000.0, 100.0),
-            ("0xWorker_Optimizer_B2", "Worker Alpha (Optimizer)", "Worker", 200.0, 120.0),
-            ("0xWorker_Researcher_C3", "Worker Beta (Researcher)", "Worker", 200.0, 110.0),
-            ("0xWorker_Rogue_D4", "Rogue Spammer Bot", "Rogue", 50.0, 40.0),
-        ]
-        for address, name, role, balance, rep in default_agents:
-            self.wallets[address] = WalletState(
-                address=address,
-                name=name,
-                role=role,
-                balance_usdc=balance,
-                locked_collateral_usdc=0.0,
-                total_earned_usdc=0.0,
-                total_slashed_usdc=0.0,
-                reputation_score=rep,
-                completed_tasks_count=0,
-                failed_tasks_count=0,
-            )
 
     # -----------------------------------------------------------------------
-    # Wallet & Ledger Operations
+    # Wallet & Ledger Operations (Dynamic only)
     # -----------------------------------------------------------------------
 
-    async def get_or_create_wallet(self, address: str, name: Optional[str] = None, role: str = "Worker") -> WalletState:
+    async def get_or_create_wallet(self, address: str, name: Optional[str] = None, role: str = "Bidder") -> WalletState:
         async with self._lock:
             if address not in self.wallets:
+                # Assign clean role: Delegator or Bidder
+                assigned_role = "Delegator" if "requester" in address.lower() or role == "Delegator" or role == "Requester" else "Bidder"
                 self.wallets[address] = WalletState(
                     address=address,
                     name=name or f"Agent_{address[:6]}",
-                    role=role,
-                    balance_usdc=100.0,
+                    role=assigned_role,
+                    balance_usdc=500.0,
                     locked_collateral_usdc=0.0,
                     reputation_score=100.0,
                 )
+            else:
+                # Update role if explicitly provided
+                if role in ["Delegator", "Bidder"]:
+                    self.wallets[address].role = role
             return self.wallets[address]
 
     async def get_all_wallets(self) -> List[WalletState]:
@@ -90,6 +71,7 @@ class StateStore:
             if not wallet or wallet.balance_usdc < amount:
                 return False
             wallet.balance_usdc -= amount
+            wallet.role = "Delegator"
             return True
 
     async def lock_worker_bond(self, address: str, bond_amount: float) -> bool:
@@ -100,6 +82,7 @@ class StateStore:
                 return False
             wallet.balance_usdc -= bond_amount
             wallet.locked_collateral_usdc += bond_amount
+            wallet.role = "Bidder"
             return True
 
     async def unlock_worker_bond(self, address: str, bond_amount: float) -> bool:
@@ -169,6 +152,7 @@ class StateStore:
                 requester_address=task_in.requester_address,
                 validation_spec=task_in.validation_spec,
                 status=TaskStatus.BROADCASTED,
+                bids=[],
                 escrow_tx_hash=escrow_tx_hash or f"0xmock_escrow_{int(time.time())}",
             )
             self.tasks[task.task_id] = task
@@ -177,7 +161,10 @@ class StateStore:
 
     async def get_task(self, task_id: str) -> Optional[TaskResponse]:
         async with self._lock:
-            return self.tasks.get(task_id)
+            task = self.tasks.get(task_id)
+            if task:
+                task.bids = self.bids.get(task_id, [])
+            return task
 
     async def list_tasks(
         self,
@@ -186,7 +173,11 @@ class StateStore:
         min_budget: Optional[float] = None
     ) -> List[TaskResponse]:
         async with self._lock:
-            results = list(self.tasks.values())
+            results = []
+            for t in self.tasks.values():
+                t.bids = self.bids.get(t.task_id, [])
+                results.append(t)
+
             if category:
                 results = [t for t in results if t.category == category]
             if status:
@@ -219,6 +210,7 @@ class StateStore:
             )
             
             self.bids[task_id].append(bid)
+            task.bids = self.bids[task_id]
             task.status = TaskStatus.MATCHING
             task.updated_at = time.time()
             return bid
@@ -229,8 +221,7 @@ class StateStore:
 
     async def assign_winning_bid(self, task_id: str, selected_bid_id: Optional[str] = None) -> Optional[BidResponse]:
         """
-        Assigns task to specified bid, or automatically selects the best bid
-        using Score = (Reputation * 0.4) - (Price * 0.4) - (Duration * 0.2)
+        Assigns task to specified bid, or automatically selects the best bid.
         """
         async with self._lock:
             task = self.tasks.get(task_id)
@@ -245,9 +236,7 @@ class StateStore:
                         chosen_bid = b
                         break
             else:
-                # Automated matchmaking formula
                 def score_bid(b: BidResponse) -> float:
-                    # Higher rep is good, lower price is good, lower duration is good
                     return (b.worker_reputation_score * 0.5) - (b.bid_price_usdc * 0.3) - (b.estimated_duration_seconds * 0.2)
                 
                 chosen_bid = max(bids, key=score_bid)
@@ -255,13 +244,11 @@ class StateStore:
             if not chosen_bid:
                 return None
             
-            # Update bid statuses
             for b in bids:
                 if b.bid_id == chosen_bid.bid_id:
                     b.status = BidStatus.ACCEPTED
                 else:
                     b.status = BidStatus.REJECTED
-                    # Refund rejected worker bond if it was locked
                     if b.worker_address in self.wallets:
                         w = self.wallets[b.worker_address]
                         w.locked_collateral_usdc = max(0.0, w.locked_collateral_usdc - b.collateral_bond_locked)
@@ -269,6 +256,7 @@ class StateStore:
 
             task.status = TaskStatus.IN_PROGRESS
             task.assigned_worker = chosen_bid.worker_address
+            task.bids = bids
             task.updated_at = time.time()
             return chosen_bid
 
@@ -304,6 +292,7 @@ class StateStore:
             else:
                 task.status = TaskStatus.SLASHED
 
+            task.bids = self.bids.get(task_id, [])
             return task
 
     # -----------------------------------------------------------------------

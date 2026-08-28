@@ -49,32 +49,47 @@ class EventType(str, Enum):
 
 
 # ---------------------------------------------------------------------------
-# Task Models
+# Task & Bid Models
 # ---------------------------------------------------------------------------
 
 class ValidationSpec(BaseModel):
     """Validation requirements depending on task category."""
-    # For CODE_GENERATION: unit test code / assertions
     test_suite_code: Optional[str] = Field(default=None, description="PyTest / Unit test script")
     min_speedup_factor: Optional[float] = Field(default=1.0, description="Optional benchmark speedup factor")
-    
-    # For RESEARCH: JSON schema dict
     json_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON schema for structural validation")
     required_keys: Optional[List[str]] = Field(default_factory=list, description="Keys that must exist in research output")
-    
-    # For QUERY: Search keywords & ground-truth entities
     search_query: Optional[str] = Field(default=None, description="Web search query string for fact-checking")
     expected_keywords: Optional[List[str]] = Field(default_factory=list, description="Key factual terms/entities expected")
 
 
+class BidCreate(BaseModel):
+    worker_address: str = Field(..., json_schema_extra={"example": "0x3A2...6C4"})
+    bid_price_usdc: float = Field(..., gt=0.0, json_schema_extra={"example": 42.0})
+    collateral_bond_locked: float = Field(..., ge=0.0, json_schema_extra={"example": 5.0})
+    estimated_duration_seconds: int = Field(default=60, gt=1)
+    notes: Optional[str] = None
+
+
+class BidResponse(BaseModel):
+    bid_id: str = Field(default_factory=lambda: f"bid_{uuid.uuid4().hex[:8]}")
+    task_id: str
+    worker_address: str
+    bid_price_usdc: float
+    collateral_bond_locked: float
+    estimated_duration_seconds: int
+    worker_reputation_score: float = 100.0
+    status: BidStatus = Field(default=BidStatus.PENDING)
+    created_at: float = Field(default_factory=time.time)
+
+
 class TaskCreate(BaseModel):
-    title: str = Field(..., min_length=3, max_length=200, example="Optimize Matrix Multiplication Kernel")
-    category: TaskCategory = Field(..., example=TaskCategory.CODE_GENERATION)
-    description: str = Field(..., example="Implement 2D matrix multiplication with NumPy / vectorized operations.")
-    budget_usdc: float = Field(..., gt=0.0, example=50.0, description="Amount locked in escrow by requester")
-    required_worker_bond: float = Field(..., ge=0.0, example=5.0, description="Collateral stake required from worker")
-    timeout_seconds: int = Field(default=300, gt=10, le=3600, example=300)
-    requester_address: str = Field(..., example="0x71C...9B1", description="Wallet address of requester agent")
+    title: str = Field(..., min_length=3, max_length=200)
+    category: TaskCategory = Field(...)
+    description: str = Field(...)
+    budget_usdc: float = Field(..., gt=0.0)
+    required_worker_bond: float = Field(..., ge=0.0)
+    timeout_seconds: int = Field(default=300, gt=10, le=3600)
+    requester_address: str = Field(...)
     validation_spec: ValidationSpec = Field(default_factory=ValidationSpec)
 
 
@@ -90,34 +105,11 @@ class TaskResponse(BaseModel):
     validation_spec: ValidationSpec
     status: TaskStatus = Field(default=TaskStatus.BROADCASTED)
     assigned_worker: Optional[str] = None
+    bids: List[BidResponse] = Field(default_factory=list, description="All bids submitted for this task")
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)
     escrow_tx_hash: Optional[str] = None
     settlement_tx_hash: Optional[str] = None
-
-
-# ---------------------------------------------------------------------------
-# Bid Models
-# ---------------------------------------------------------------------------
-
-class BidCreate(BaseModel):
-    worker_address: str = Field(..., example="0x3A2...6C4")
-    bid_price_usdc: float = Field(..., gt=0.0, example=42.0)
-    collateral_bond_locked: float = Field(..., ge=0.0, example=5.0)
-    estimated_duration_seconds: int = Field(default=60, gt=1)
-    notes: Optional[str] = None
-
-
-class BidResponse(BaseModel):
-    bid_id: str = Field(default_factory=lambda: f"bid_{uuid.uuid4().hex[:8]}")
-    task_id: str
-    worker_address: str
-    bid_price_usdc: float
-    collateral_bond_locked: float
-    estimated_duration_seconds: int
-    worker_reputation_score: float = 100.0
-    status: BidStatus = Field(default=BidStatus.PENDING)
-    created_at: float = Field(default_factory=time.time)
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +143,7 @@ class VerificationReport(BaseModel):
 class WalletState(BaseModel):
     address: str
     name: str
-    role: str = Field(..., example="Requester | Worker | Rogue")
+    role: str = Field(default="Bidder", description="Delegator | Bidder")
     balance_usdc: float = Field(default=1000.0, ge=0.0)
     locked_collateral_usdc: float = Field(default=0.0, ge=0.0)
     total_earned_usdc: float = Field(default=0.0, ge=0.0)
