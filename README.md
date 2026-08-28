@@ -140,8 +140,8 @@ Full module-level I/O contracts and repo layout are in [`technical-architecture.
 ## Links
 
 - **Abstract**: [`ABSTRACT.md`](./ABSTRACT.md)
-- **Live Dashboard**: [Deployment URL Placeholder](https://kshrs.github.io/atoa-market/)
-- **Pitch Deck**: [Presentation Slides Placeholder](https://canva.link/xzctldufcs4v1da)
+- **Live Dashboard**: [View atoa-market on GithubPages](https://kshrs.github.io/atoa-market/)
+- **Pitch Deck**: [Presentation](https://canva.link/xzctldufcs4v1da)
 - **Repository**: `github.com/kshrs/atoa-market`
 
 ---
