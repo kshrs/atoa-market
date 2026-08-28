@@ -1,33 +1,34 @@
 """
-ATOA (Agent-to-Agent Economy) Data Models & Canonical Schemas.
-Defines all Pydantic v2 schemas for tasks, bids, deliverables, wallets, and WebSocket telemetry events.
+ATOA Protocol Data Models & Schemas (Pydantic v2).
+Defines standard contracts for tasks, reverse-auction bids, deliverables, 
+validation specifications, and real-time state telemetry events.
 """
 
 from enum import Enum
 from typing import Dict, Any, List, Optional
-from pydantic import BaseModel, Field
 import time
 import uuid
+from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
 
+class TaskStatus(str, Enum):
+    BROADCASTED = "BROADCASTED"
+    MATCHING = "MATCHING"
+    IN_PROGRESS = "IN_PROGRESS"
+    VERIFYING = "VERIFYING"
+    SETTLED = "SETTLED"
+    SLASHED = "SLASHED"
+    CANCELLED = "CANCELLED"
+
+
 class TaskCategory(str, Enum):
     CODE_GENERATION = "code_generation"
     RESEARCH = "research"
     QUERY = "query"
-
-
-class TaskStatus(str, Enum):
-    BROADCASTED = "BROADCASTED"      # Task published, awaiting bids
-    MATCHING = "MATCHING"            # Bids received, evaluation/selection in progress
-    IN_PROGRESS = "IN_PROGRESS"      # Worker assigned, deliverable in flight
-    VERIFYING = "VERIFYING"          # Deliverable submitted, running validation bots
-    SETTLED = "SETTLED"              # Passed verification, funds released, bond returned
-    SLASHED = "SLASHED"              # Failed verification/malicious, worker bond slashed
-    CANCELLED = "CANCELLED"          # Timed out or cancelled by requester
 
 
 class BidStatus(str, Enum):
@@ -77,19 +78,20 @@ class BidResponse(BaseModel):
     bid_price_usdc: float
     collateral_bond_locked: float
     estimated_duration_seconds: int
+    notes: Optional[str] = None
     worker_reputation_score: float = 100.0
-    status: BidStatus = Field(default=BidStatus.PENDING)
+    status: BidStatus = BidStatus.PENDING
     created_at: float = Field(default_factory=time.time)
 
 
 class TaskCreate(BaseModel):
-    title: str = Field(..., min_length=3, max_length=200)
-    category: TaskCategory = Field(...)
-    description: str = Field(...)
-    budget_usdc: float = Field(..., gt=0.0)
-    required_worker_bond: float = Field(..., ge=0.0)
-    timeout_seconds: int = Field(default=300, gt=10, le=3600)
-    requester_address: str = Field(...)
+    title: str = Field(..., min_length=3, max_length=200, example="Optimize Matrix Multiplication")
+    category: TaskCategory = Field(..., example=TaskCategory.CODE_GENERATION)
+    description: str = Field(..., min_length=5, example="Write an O(N^2.8) vectorized Strassen matrix multiplication routine.")
+    budget_usdc: float = Field(..., gt=0.0, example=50.0)
+    required_worker_bond: float = Field(..., ge=0.0, example=5.0)
+    timeout_seconds: int = Field(default=300, ge=10, le=3600)
+    requester_address: str = Field(..., example="0x1B4...9A8")
     validation_spec: ValidationSpec = Field(default_factory=ValidationSpec)
 
 
@@ -103,13 +105,14 @@ class TaskResponse(BaseModel):
     timeout_seconds: int
     requester_address: str
     validation_spec: ValidationSpec
-    status: TaskStatus = Field(default=TaskStatus.BROADCASTED)
+    status: TaskStatus = TaskStatus.BROADCASTED
     assigned_worker: Optional[str] = None
-    bids: List[BidResponse] = Field(default_factory=list, description="All bids submitted for this task")
+    winning_bid_id: Optional[str] = None
+    escrow_locked: bool = False
+    bids: List[BidResponse] = Field(default_factory=list)
     created_at: float = Field(default_factory=time.time)
-    updated_at: float = Field(default_factory=time.time)
-    escrow_tx_hash: Optional[str] = None
-    settlement_tx_hash: Optional[str] = None
+    assigned_at: Optional[float] = None
+    settled_at: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +154,7 @@ class WalletState(BaseModel):
     reputation_score: float = Field(default=100.0, ge=0.0, le=1000.0)
     completed_tasks_count: int = 0
     failed_tasks_count: int = 0
+    last_active_at: float = Field(default_factory=time.time)
 
 
 # ---------------------------------------------------------------------------
@@ -163,16 +167,5 @@ class NetworkAnalytics(BaseModel):
     total_tasks_slashed: int = 0
     total_volume_usdc: float = 0.0
     total_slashed_usdc: float = 0.0
-    active_agents_count: int = 0
-    success_rate_pct: float = 100.0
-
-
-# ---------------------------------------------------------------------------
-# WebSocket Telemetry Event Envelope
-# ---------------------------------------------------------------------------
-
-class EventEnvelope(BaseModel):
-    event_id: str = Field(default_factory=lambda: f"evt_{uuid.uuid4().hex[:8]}")
-    event_type: EventType
-    timestamp: float = Field(default_factory=time.time)
-    data: Dict[str, Any]
+    average_bids_per_task: float = 0.0
+    active_workers_count: int = 0
