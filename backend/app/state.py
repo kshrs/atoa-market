@@ -46,7 +46,12 @@ class StateStore:
         async with self._lock:
             now = time.time()
             if address not in self.wallets:
-                assigned_role = "Delegator" if "requester" in address.lower() or role in ["Delegator", "Requester"] else "Bidder"
+                # Explicitly honor the role requested unless address clearly indicates requester
+                if role in ["Delegator", "Requester"] or "requester" in address.lower() or "delegator" in address.lower():
+                    assigned_role = "Delegator"
+                else:
+                    assigned_role = "Bidder"
+
                 self.wallets[address] = WalletState(
                     address=address,
                     name=name or f"Agent_{address[:6]}",
@@ -61,8 +66,9 @@ class StateStore:
             else:
                 if name:
                     self.wallets[address].name = name
-                if role in ["Delegator", "Bidder"]:
-                    self.wallets[address].role = role
+                # Only upgrade to Delegator if explicitly performing a delegator action
+                if role == "Delegator":
+                    self.wallets[address].role = "Delegator"
                 self.wallets[address].last_active_at = now
             return self.wallets[address]
 
@@ -105,6 +111,7 @@ class StateStore:
                 return False
             wallet.locked_collateral_usdc = max(0.0, wallet.locked_collateral_usdc - bond_amount)
             wallet.balance_usdc += bond_amount
+            wallet.role = "Bidder"
             wallet.last_active_at = time.time()
             return True
 
@@ -117,6 +124,7 @@ class StateStore:
             wallet.balance_usdc += amount
             wallet.total_earned_usdc += amount
             wallet.completed_tasks_count += 1
+            wallet.role = "Bidder"
             wallet.last_active_at = time.time()
             # Progressive reputation reward (up to 1000 max)
             wallet.reputation_score = min(1000.0, wallet.reputation_score + 15.0)
@@ -134,11 +142,13 @@ class StateStore:
             worker.locked_collateral_usdc = max(0.0, worker.locked_collateral_usdc - bond_amount)
             worker.total_slashed_usdc += bond_amount
             worker.failed_tasks_count += 1
+            worker.role = "Bidder"
             worker.reputation_score = max(0.0, worker.reputation_score - 35.0)
             worker.last_active_at = now
 
             if requester:
                 requester.balance_usdc += (bond_amount * 0.5)
+                requester.role = "Delegator"
                 requester.last_active_at = now
 
             return True
@@ -150,6 +160,7 @@ class StateStore:
             if not requester:
                 return False
             requester.balance_usdc += amount
+            requester.role = "Delegator"
             requester.last_active_at = time.time()
             return True
 
@@ -212,6 +223,7 @@ class StateStore:
             worker_rep = 100.0
             if bid_in.worker_address in self.wallets:
                 worker_rep = self.wallets[bid_in.worker_address].reputation_score
+                self.wallets[bid_in.worker_address].role = "Bidder"
                 self.wallets[bid_in.worker_address].last_active_at = time.time()
 
             bid = BidResponse(
@@ -300,8 +312,9 @@ class StateStore:
             task.updated_at = time.time()
             task.bids = task_bids
 
-            # Touch active timestamp
+            # Touch active timestamp & enforce Bidder role
             if best_bid.worker_address in self.wallets:
+                self.wallets[best_bid.worker_address].role = "Bidder"
                 self.wallets[best_bid.worker_address].last_active_at = time.time()
 
             return task
@@ -320,6 +333,7 @@ class StateStore:
             task.status = TaskStatus.VERIFYING
             task.updated_at = time.time()
             if submission.worker_address in self.wallets:
+                self.wallets[submission.worker_address].role = "Bidder"
                 self.wallets[submission.worker_address].last_active_at = time.time()
             return task
 
