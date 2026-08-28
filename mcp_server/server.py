@@ -1,17 +1,18 @@
 """
 ATOA Unified MCPServer for agy-cli, Claude, and LLM Agents (MCP v2).
-Exposes standard MCP tools over stdio/HTTP to interact seamlessly with the ATOA Marketplace.
+Exposes standard MCP tools with built-in polling/waiting support for autonomous task delegation.
 """
 
 import os
 import json
+import asyncio
 import httpx
 from mcp.server.mcpserver import MCPServer
 
 # Initialize MCPServer (MCP 2.x standard)
 mcp = MCPServer(
     name="atoa-marketplace",
-    instructions="Tools to interact with the ATOA Autonomous Agent Economy marketplace (create tasks, bid, stake, submit solutions, check balances)."
+    instructions="Tools to interact with the ATOA Autonomous Agent Economy marketplace (create tasks, wait for completion, bid, stake, submit solutions, check balances)."
 )
 
 API_BASE_URL = os.environ.get("ATOA_API_URL", "http://localhost:8000")
@@ -42,10 +43,12 @@ async def atoa_create_task(
     required_worker_bond: float,
     test_suite_code: str = "",
     json_schema_str: str = "",
-    search_keywords: str = ""
+    search_keywords: str = "",
+    wait_for_completion: bool = False,
+    timeout_seconds: int = 120
 ) -> str:
     """
-    Publish a new task to the ATOA marketplace and lock budget into escrow.
+    Publish a new task to the ATOA marketplace and optionally wait until a worker bids, gets assigned, and finishes.
     
     Args:
         requester_address: The wallet address of the task creator (e.g. '0xRequester_A1')
@@ -57,6 +60,8 @@ async def atoa_create_task(
         test_suite_code: (For code_generation) Python assert statements / unit tests
         json_schema_str: (For research) JSON string of required JSON schema
         search_keywords: (For query) Comma-separated list of expected factual keywords
+        wait_for_completion: If True, blocks until the task reaches 'SETTLED' or 'SLASHED' or times out
+        timeout_seconds: Maximum seconds to wait if wait_for_completion is True (default 120s)
     """
     validation_spec = {}
     if test_suite_code:
@@ -75,16 +80,93 @@ async def atoa_create_task(
         "description": description,
         "budget_usdc": budget_usdc,
         "required_worker_bond": required_worker_bond,
-        "timeout_seconds": 300,
+        "timeout_seconds": timeout_seconds,
         "requester_address": requester_address,
         "validation_spec": validation_spec
     }
 
-    async with httpx.AsyncClient(base_url=API_BASE_URL) as client:
+    async with httpx.AsyncClient(base_url=API_BASE_URL, timeout=timeout_seconds + 10) as client:
         res = await client.post("/v1/tasks", json=payload)
-        if res.status_code in [200, 201]:
-            return json.dumps(res.json(), indent=2)
-        return f"Error ({res.status_code}): {res.text}"
+        if res.status_code not in [200, 201]:
+            return f"Error ({res.status_code}): {res.text}"
+        
+        task_data = res.json()
+        task_id = task_data["task_id"]
+
+        if not wait_for_completion:
+            return json.dumps(task_data, indent=2)
+
+        # Polling loop: Wait until task is SETTLED or SLASHED
+        poll_interval = 2.0
+        elapsed = 0.0
+        while elapsed < timeout_seconds:
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+
+            # Check if bids arrived and task needs auto-assignment
+            status_res = await client.get(f"/v1/tasks/{task_id}")
+            if status_res.status_code != 200:
+                continue
+
+            current_task = status_res.json()
+            task_status = current_task.get("status")
+
+            # If task is in MATCHING and not yet assigned, trigger assignment
+            if task_status == "MATCHING":
+                await client.post(f"/v1/tasks/{task_id}/assign")
+
+            # Check if task is finished
+            if task_status in ["SETTLED", "SLASHED", "CANCELLED"]:
+                return json.dumps({
+                    "message": f"Task reached terminal status: {task_status}",
+                    "final_task_state": current_task
+                }, indent=2)
+
+        return json.dumps({
+            "message": f"Timed out waiting for task completion after {timeout_seconds}s.",
+            "last_task_state": current_task
+        }, indent=2)
+
+
+@mcp.tool()
+async def atoa_wait_for_task_completion(task_id: str, timeout_seconds: int = 120) -> str:
+    """
+    Blocks and waits until a specific task is completed (SETTLED or SLASHED), auto-assigning matching bids if needed.
+    
+    Args:
+        task_id: The ID of the task to monitor (e.g. 'task_1234abcd')
+        timeout_seconds: Maximum seconds to wait (default 120s)
+    """
+    async with httpx.AsyncClient(base_url=API_BASE_URL, timeout=timeout_seconds + 10) as client:
+        poll_interval = 2.0
+        elapsed = 0.0
+        current_task = {}
+        
+        while elapsed < timeout_seconds:
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+
+            status_res = await client.get(f"/v1/tasks/{task_id}")
+            if status_res.status_code != 200:
+                continue
+
+            current_task = status_res.json()
+            task_status = current_task.get("status")
+
+            # Auto-assign if bids are present
+            if task_status == "MATCHING":
+                await client.post(f"/v1/tasks/{task_id}/assign")
+
+            if task_status in ["SETTLED", "SLASHED", "CANCELLED"]:
+                return json.dumps({
+                    "status": task_status,
+                    "task_data": current_task
+                }, indent=2)
+
+        return json.dumps({
+            "message": f"Timed out after {timeout_seconds}s waiting for task {task_id}.",
+            "last_status": current_task.get("status")
+        }, indent=2)
 
 
 @mcp.tool()
