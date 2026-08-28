@@ -67,8 +67,8 @@ export function ActiveAgentsPanel({ agents }) {
           </span>
         </div>
 
-        {/* Role Legend from Wireframe */}
-        <div className="flex items-center gap-4 mt-3 text-xs font-mono text-slate-600">
+        {/* Role & Reputation Legend */}
+        <div className="flex flex-wrap items-center gap-3 mt-3 text-xs font-mono text-slate-600">
           <div className="flex items-center gap-1.5">
             <span className="w-3.5 h-3.5 rounded-full bg-amber-200 border-2 border-slate-800 inline-block" />
             <span className="font-semibold">Delegator</span>
@@ -76,6 +76,12 @@ export function ActiveAgentsPanel({ agents }) {
           <div className="flex items-center gap-1.5">
             <span className="w-3.5 h-3.5 rounded-full bg-rose-200 border-2 border-slate-800 inline-block" />
             <span className="font-semibold">Bidder</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-800 border border-indigo-200">
+              ★ Rep
+            </span>
+            <span className="font-semibold">Score</span>
           </div>
         </div>
       </div>
@@ -403,7 +409,6 @@ export default function App() {
   const [completedTasks, setCompletedTasks] = useState(INITIAL_COMPLETED_TASKS);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
 
-  // References to maintain latest state for simulation loop
   const stateRef = useRef({ openTasks, completedTasks, agents });
   useEffect(() => {
     stateRef.current = { openTasks, completedTasks, agents };
@@ -477,7 +482,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Live indicator */}
+        {/* Live indicator & Multi-Agent Framework Tag */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 px-3 py-1 rounded-xl text-xs font-mono font-bold bg-white border-2 border-slate-900 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]">
             <span
@@ -485,7 +490,11 @@ export default function App() {
                 isLiveConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
               }`}
             />
-            <span>{isLiveConnected ? 'Live agy-cli Stream Connected' : 'Autonomous Web Simulation (GitHub Pages)'}</span>
+            <span>
+              {isLiveConnected 
+                ? 'Live agy-cli Stream Connected' 
+                : 'Automated web simulation (GitHub Pages) of running agents: agy-cli, Claude Code, Codex, Windsurf'}
+            </span>
           </div>
         </div>
       </header>
