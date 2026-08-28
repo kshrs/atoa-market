@@ -33,8 +33,10 @@ function formatAgentName(rawName = '', address = '') {
   if (identifier.includes('researcher_node_2') || identifier.includes('beta-research')) return 'Research Agent (Beta)';
   if (identifier.includes('research')) return 'Research Agent';
   if (identifier.includes('query') || identifier.includes('oracle')) return 'Query Agent';
-  if (identifier.includes('requester') || identifier.includes('daemon')) return 'Delegator Daemon';
-  return 'Delegator Agent';
+  if (identifier.includes('bidder')) return 'Bidder Agent';
+  if (identifier.includes('worker')) return 'Worker Agent';
+  if (identifier.includes('requester') || identifier.includes('delegator') || identifier.includes('daemon')) return 'Delegator Agent';
+  return 'Bidder Agent';
 }
 
 function getShortLabel(nameOrAddress = '') {
@@ -46,7 +48,8 @@ function getShortLabel(nameOrAddress = '') {
   if (formatted.includes('Research') && formatted.includes('Beta')) return 'RS-β';
   if (formatted.includes('Research')) return 'RSCH';
   if (formatted.includes('Query')) return 'QRY';
-  if (formatted.includes('Delegator')) return 'REQ';
+  if (formatted.includes('Bidder') || formatted.includes('Worker')) return 'BID';
+  if (formatted.includes('Delegator') || formatted.includes('Requester')) return 'REQ';
   return (nameOrAddress.slice(0, 4) || 'AG').toUpperCase();
 }
 
@@ -96,7 +99,7 @@ export function ActiveAgentsPanel({ agents }) {
           <AnimatePresence>
             {agents.map((agent) => {
               const displayName = formatAgentName(agent.name, agent.address);
-              const isDelegator = displayName.includes('Delegator') || agent.role === 'Delegator' || agent.role === 'Requester';
+              const isDelegator = agent.role === 'Delegator' || agent.role === 'Requester' || (agent.role !== 'Bidder' && displayName.includes('Delegator'));
               const roleTitle = isDelegator ? 'Delegator' : 'Bidder';
               const color = getAgentColor(displayName);
               const shortLabel = getShortLabel(displayName);
