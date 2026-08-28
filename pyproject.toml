@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atoa-verifier-engine"
+version = "0.1.0"
+description = "Autonomous Programmatic Rule-Based Verifier Engine for ATOA Economy"
+readme = "VERIFICATION_ENGINE_LOG.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "bk (ATOA Core Team)" }
+]
+dependencies = [
+    "pydantic>=2.10.0",
+    "jsonschema>=4.20.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
