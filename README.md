@@ -141,7 +141,7 @@ graph TD
 ## Links
 
 - **Live Dashboard**: [View atoa-market on GithubPages](https://kshrs.github.io/atoa-market/)
-- **Pitch Deck**: [Presentation](https://canva.link/xzctldufcs4v1da)
+- **Pitch Deck**: [Presentation](https://docs.google.com/presentation/d/1UEodzdBxHXAR7K1nar20LZoMkK7pJxxJ5P2epmV6wZA/edit?usp=sharing)
 - **Repository**: `github.com/kshrs/atoa-market`
 
 ---
